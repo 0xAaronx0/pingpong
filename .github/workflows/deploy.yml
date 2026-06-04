@@ -11,7 +11,11 @@ jobs:
 
     steps:
       - name: Code auschecken
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
+      - name: Debug - Test SSH Verbindung
+        run: |
+          nc -zv ${{ secrets.VPS_HOST }} 22 || echo "Port 22 nicht erreichbar"
 
       - name: Auf VPS deployen
         uses: appleboy/ssh-action@v1.0.0
