@@ -1,0 +1,113 @@
+"""The cron brain. Run on a schedule; Hermes auto-delivers stdout to the user.
+
+Three jobs each run:
+  1. Discover new nearby offers that match the local profile -> suggest to user.
+  2. Surface new interest on the user's own offers -> prompt to accept.
+  3. Reveal contacts for the user's interests that got accepted -> it's a match.
+
+If nothing is new, prints exactly "[SILENT]" so Hermes suppresses the message
+(see docs/PROTOCOL.md and the Hermes cron `[SILENT]` convention).
+"""
+from __future__ import annotations
+
+import client
+import geo
+
+ACTIVITY_LABELS = {
+    "table_tennis": "Tischtennis", "running": "Laufen", "cycling": "Radfahren",
+    "bouldering": "Bouldern", "tennis": "Tennis", "basketball": "Basketball",
+    "football": "Fußball", "badminton": "Badminton", "swimming": "Schwimmen",
+    "walk": "Spaziergang", "board_games": "Brettspiele", "coffee": "Kaffee",
+    "beer": "Bier", "other": "Sonstiges",
+}
+
+
+def label(activity: str) -> str:
+    return ACTIVITY_LABELS.get(activity, activity)
+
+
+def watch_cells(profile: dict) -> list[str]:
+    home = profile.get("home") or {}
+    if "lat" not in home or "lon" not in home:
+        raise SystemExit("profile.yaml needs home.lat and home.lon")
+    precision = int(profile.get("geohash_precision", 6))
+    rings = int(profile.get("radius_rings", 1))
+    center = geo.encode(float(home["lat"]), float(home["lon"]), precision)
+    return geo.expand(center, rings)
+
+
+def discover(ident, profile, seen) -> list[str]:
+    cells = watch_cells(profile)
+    activities = set(profile.get("activities") or [])
+    notified = set(seen["notified_offers"])
+    lines = []
+    offers = client.get("/offers", params={"cells": ",".join(cells)}) or []
+    for o in offers:
+        if o["agent_id"] == ident.agent_id:       # my own offer
+            continue
+        if activities and o["activity"] not in activities:
+            continue
+        if o["id"] in notified:
+            continue
+        notified.add(o["id"])
+        title = o.get("title") or label(o["activity"])
+        note = f" — {o['note']}" if o.get("note") else ""
+        lines.append(
+            f"🏓 {label(o['activity'])}: {title}{note}\n"
+            f"   wann: {o['earliest']} – {o['latest']}  (Zelle {o['geocell']})\n"
+            f"   interessiert? → interest.py --offer-id {o['id']}"
+        )
+    seen["notified_offers"] = list(notified)
+    return lines
+
+
+def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
+    incoming, matches = [], []
+    cursor = seen.get("inbox_cursor")
+    res = client.get("/inbox", ident=ident, params={"since": cursor}) or {"events": []}
+    newest = cursor
+    for ev in res["events"]:
+        newest = ev["ts"] if (newest is None or ev["ts"] > newest) else newest
+        if ev["type"] == "new_interest":
+            note = f" (Notiz: {ev['note']})" if ev.get("note") else ""
+            incoming.append(
+                f"📨 Jemand interessiert sich für dein {label(ev.get('activity','?'))}-Angebot{note}.\n"
+                f"   annehmen → accept.py --offer-id {ev['offer_id']} --interest-id {ev['interest_id']}"
+            )
+        elif ev["type"] == "interest_accepted":
+            contact = ident.unseal(ev["sealed_for_interested"])
+            matches.append(
+                f"✅ Match! Deine Anfrage wurde angenommen. Kontakt: {contact}\n"
+                f"   Macht Ort & Uhrzeit konkret aus."
+            )
+        elif ev["type"] == "interest_declined":
+            matches.append("ℹ️ Eine deiner Anfragen wurde abgelehnt.")
+    seen["inbox_cursor"] = newest
+    return incoming, matches
+
+
+def main() -> None:
+    ident = client.Identity.load_or_create()
+    profile = client.load_profile()
+    seen = client.load_seen()
+
+    nearby = discover(ident, profile, seen)
+    incoming, matches = process_inbox(ident, seen)
+    client.save_seen(seen)
+
+    if not (nearby or incoming or matches):
+        print("[SILENT]")
+        return
+
+    blocks = []
+    if matches:
+        blocks.append("\n".join(matches))
+    if incoming:
+        blocks.append("Eingehendes Interesse:\n" + "\n".join(incoming))
+    if nearby:
+        blocks.append("Neue Angebote in deiner Nähe:\n" + "\n".join(nearby))
+    print("\n\n".join(blocks))
+
+
+if __name__ == "__main__":
+    main()

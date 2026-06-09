@@ -1,0 +1,36 @@
+name: build-broker-image
+
+# Builds the broker container and pushes it to the GitHub Container Registry.
+# The VPS Compose project references ghcr.io/<owner>/pingpong-broker:latest and
+# Watchtower (or VPS_updateProjectV1) rolls the new image out.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "broker/**"
+      - ".github/workflows/broker-image.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: ./broker
+          push: true
+          tags: |
+            ghcr.io/0xaaronx0/pingpong-broker:latest
+            ghcr.io/0xaaronx0/pingpong-broker:${{ github.sha }}

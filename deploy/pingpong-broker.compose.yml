@@ -1,0 +1,26 @@
+# pingpong broker — deployed as a Hostinger VPS Docker-Compose project behind the
+# existing Traefik proxy. The image is built in CI and pushed to ghcr; Traefik
+# terminates TLS via the `letsencrypt` resolver and routes the subdomain to the
+# container's port 8000. SQLite persists on a named volume.
+services:
+  broker:
+    image: ghcr.io/0xaaronx0/pingpong-broker:latest
+    pull_policy: always
+    restart: unless-stopped
+    environment:
+      - PINGPONG_DB=/data/pingpong.db
+      - PINGPONG_MAX_TTL_HOURS=24
+      - PINGPONG_MAX_OPEN_OFFERS=5
+      - PINGPONG_RATE_PER_MIN=30
+    volumes:
+      - pingpong-data:/data
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.pingpong.rule=Host(`pingpong.kitescout.tech`)
+      - traefik.http.routers.pingpong.entrypoints=websecure
+      - traefik.http.routers.pingpong.tls.certresolver=letsencrypt
+      - traefik.http.services.pingpong.loadbalancer.server.port=8000
+      - com.centurylinklabs.watchtower.enable=true
+
+volumes:
+  pingpong-data:

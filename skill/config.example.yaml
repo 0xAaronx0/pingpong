@@ -1,0 +1,6 @@
+# pingpong — Skill-Konfiguration.
+# Kopieren nach  $PINGPONG_STATE_DIR/config.yaml  (Default ~/.pingpong/config.yaml).
+# Alternativ die Broker-URL als Umgebungsvariable PINGPONG_BROKER_URL setzen
+# (env hat Vorrang). In Hermes gehört das unter skills.config.*.
+
+broker_url: "https://pingpong.example.org"
