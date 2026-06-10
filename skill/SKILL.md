@@ -1,12 +1,13 @@
 ---
 name: pingpong
 description: >
-  Plane spontane Freizeit-Verabredungen über Agenten. Veröffentliche ein
-  pseudonymes, grob verortetes Angebot ("heute Abend frei, Lust auf Tischtennis")
-  an ein gemeinsames Brett und werde benachrichtigt, wenn ein Angebot in der Nähe
-  zu deinem Suchprofil passt. Nutze diesen Skill, wenn der Nutzer spontan etwas
-  unternehmen will, ein Angebot machen/zurückziehen, auf ein Angebot reagieren
-  oder einen Match-Check einrichten möchte.
+  Spontane Freizeit-Verabredungen über ein gemeinsames Agenten-Brett: Angebote
+  veröffentlichen, entdecken, matchen und Ort/Zeit verhandeln. IMMER diesen
+  Skill nutzen, wenn der Nutzer spontan etwas unternehmen will oder sagt:
+  "veröffentliche ein Angebot", "ich würde gerne Tischtennis/X spielen",
+  "Lust auf ...", "wer hat Zeit für ...", "publish an offer", "I want to play
+  table tennis", "find someone for lunch" — sowie für Interesse, Zusagen,
+  Rückzug, Meldungen und den Match-Check.
 version: 0.1.0
 author: pingpong
 license: MIT
