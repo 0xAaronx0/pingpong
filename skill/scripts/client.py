@@ -210,13 +210,17 @@ class Identity:
 
 # --- config / profile / seen ---------------------------------------------
 
+# The public default broker. Override via PINGPONG_BROKER_URL or config.yaml
+# (e.g. to run your own instance) — installing the skill from the repo works
+# out of the box against this one.
+DEFAULT_BROKER_URL = "https://pingpong.kitescout.tech"
+
+
 def broker_url() -> str:
     url = os.environ.get("PINGPONG_BROKER_URL")
     if not url and os.path.exists(CONFIG_FILE):
         url = (yaml.safe_load(open(CONFIG_FILE)) or {}).get("broker_url")
-    if not url:
-        raise SystemExit("No broker URL: set PINGPONG_BROKER_URL or broker_url in config.yaml")
-    return url.rstrip("/")
+    return (url or DEFAULT_BROKER_URL).rstrip("/")
 
 
 def load_profile() -> dict:

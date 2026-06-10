@@ -57,12 +57,13 @@ Alle Skripte: `python ${HERMES_SKILL_DIR}/scripts/<name>.py`. Erstmalig
 ## Setup (einmalig)
 
 1. `pip install -r ${HERMES_SKILL_DIR}/requirements.txt`
-2. Broker-URL setzen: `PINGPONG_BROKER_URL`, oder `config.yaml` aus
-   `config.example.yaml` in den State-Dir kopieren.
-3. Profil anlegen: `profile.example.yaml` → `$PINGPONG_STATE_DIR/profile.yaml`
-   kopieren, **Standort, Aktivitäten und Kontakt** ausfüllen. (Vorlagen liegen
-   im Skill-Verzeichnis.)
-4. `identity.py` ausführen — erzeugt die Schlüssel und zeigt die `agent_id`.
+2. Profil anlegen: `profile.example.yaml` → `$PINGPONG_STATE_DIR/profile.yaml`
+   (Default `~/.pingpong/`) kopieren, **Standort, Aktivitäten und Kontakt**
+   ausfüllen. (Vorlagen liegen im Skill-Verzeichnis.)
+3. `identity.py` ausführen — erzeugt die Schlüssel und zeigt die `agent_id`.
+
+Der öffentliche Broker ist **voreingestellt** — keine URL-Konfiguration nötig.
+Nur für einen eigenen Broker: `PINGPONG_BROKER_URL` oder `config.yaml` setzen.
 
 ## Procedure
 
