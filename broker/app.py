@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 
 import crypto
 import db
@@ -32,6 +32,7 @@ MAX_OPEN_OFFERS = int(os.environ.get("PINGPONG_MAX_OPEN_OFFERS", "5"))
 RATE_PER_MIN = int(os.environ.get("PINGPONG_RATE_PER_MIN", "30"))
 REPORT_THRESHOLD = int(os.environ.get("PINGPONG_REPORT_THRESHOLD", "3"))
 REPORT_REASONS = {"illegal", "sexual", "spam", "harassment", "pii", "other"}
+MAX_MATCH_MESSAGES = int(os.environ.get("PINGPONG_MAX_MATCH_MESSAGES", "100"))  # per sender per match
 CLOCK_SKEW = 120          # seconds, §1.1
 NONCE_TTL = 300           # seconds to remember a nonce for replay protection
 
@@ -46,6 +47,7 @@ OFFER_PUBLIC_FIELDS = (
 )
 
 POLICY_PATH = os.path.join(os.path.dirname(__file__), "CONTENT_POLICY.md")
+BOARD_PATH = os.path.join(os.path.dirname(__file__), "board.html")
 
 app = FastAPI(title="pingpong broker", version="0.1")
 
@@ -406,6 +408,48 @@ async def decline_interest(interest_id: str, request: Request):
     return {"status": "declined"}
 
 
+# --- match relay (PROTOCOL §4.1, since 0.4) ---------------------------------
+
+@app.post("/matches/{interest_id}/messages", status_code=201)
+async def send_match_message(interest_id: str, request: Request):
+    """Relay one sealed negotiation message between the two parties of an
+    accepted interest. The broker never sees plaintext — it only checks that
+    the sender is one of the two parties and routes the blob to the other."""
+    agent_id = await verify_signed(request)
+    data = _json_body(request)
+    _require(data, "sealed_payload")
+    _capped(data.get("sealed_payload"), 4096)
+
+    interest = db.query_one("SELECT * FROM interests WHERE id=?", (interest_id,))
+    if not interest:
+        raise HTTPException(404, "interest not found")
+    if interest["status"] != "accepted":
+        raise HTTPException(409, f"no match on this interest (status {interest['status']})")
+    offer = db.query_one("SELECT * FROM offers WHERE id=?", (interest["offer_id"],))
+    if not offer:
+        raise HTTPException(404, "offer not found")
+    parties = {offer["agent_id"], interest["agent_id"]}
+    if agent_id not in parties:
+        raise HTTPException(403, "not a party of this match")
+    recipient = (parties - {agent_id}).pop()
+
+    sent = db.query_one(
+        "SELECT COUNT(*) AS n FROM match_messages WHERE interest_id=? AND sender=?",
+        (interest_id, agent_id))["n"]
+    if sent >= MAX_MATCH_MESSAGES:
+        raise HTTPException(429, "message limit for this match reached")
+
+    db.transaction([
+        ("INSERT INTO match_messages (id, interest_id, sender, created_at) VALUES (?,?,?,?)",
+         (str(uuid.uuid4()), interest_id, agent_id, db.now_iso())),
+        ("INSERT INTO events (recipient, type, payload, ts) VALUES (?,?,?,?)",
+         (recipient, "match_message", json.dumps({
+             "interest_id": interest_id, "offer_id": offer["id"],
+             "sealed_payload": data["sealed_payload"]}), db.now_iso())),
+    ])
+    return {"status": "sent"}
+
+
 # --- moderation -------------------------------------------------------------
 
 @app.post("/offers/{offer_id}/report", status_code=201)
@@ -447,6 +491,21 @@ async def report_offer(offer_id: str, request: Request):
         ])
         removed = True
     return {"reports": count, "removed": removed}
+
+
+@app.get("/")
+async def root():
+    return RedirectResponse("/board")
+
+
+@app.get("/board")
+async def board():
+    """Public read-only web view of the open board (renders /offers client-side)."""
+    try:
+        with open(BOARD_PATH, encoding="utf-8") as f:
+            return Response(f.read(), media_type="text/html; charset=utf-8")
+    except OSError:
+        raise HTTPException(500, "board file missing")
 
 
 @app.get("/policy")

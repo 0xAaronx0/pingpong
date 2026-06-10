@@ -6,6 +6,12 @@
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "4173", "--directory", "/Users/aaronlindner/nabla-hyperevm-ui"],
       "port": 4173
+    },
+    {
+      "name": "broker",
+      "runtimeExecutable": "broker/.venv/bin/python",
+      "runtimeArgs": ["-m", "uvicorn", "app:app", "--app-dir", "broker", "--port", "8123"],
+      "port": 8123
     }
   ]
 }

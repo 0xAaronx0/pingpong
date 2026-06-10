@@ -111,6 +111,42 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
             )
         elif ev["type"] == "interest_declined":
             matches.append("ℹ️ Eine deiner Anfragen wurde abgelehnt.")
+        elif ev["type"] == "match_message":
+            try:
+                offer = client.get(f"/offers/{ev['offer_id']}")
+                if not client.verify_offer(offer):
+                    raise ValueError("offer signature invalid")
+                if offer["agent_id"] == ident.agent_id:
+                    # I'm the owner -> sender is the interested party
+                    interests = client.get(f"/offers/{ev['offer_id']}/interests", ident=ident)
+                    match = next((i for i in interests if i["id"] == ev["interest_id"]), None)
+                    if not match or not client.verify_interest(match, ev["offer_id"]):
+                        raise ValueError("interest signature invalid")
+                    sender = match["agent_id"]
+                else:
+                    sender = offer["agent_id"]
+                body = ident.unseal_message(ev["sealed_payload"], sender, ev["interest_id"])
+            except (CryptoError, ValueError, KeyError, TypeError, client.BrokerError):
+                matches.append("⚠️ Eine Match-Nachricht ließ sich nicht entschlüsseln "
+                               "oder verifizieren — übersprungen.")
+                continue
+            kind = body.get("kind")
+            note = f"\n   Notiz: {body['note']}" if body.get("note") else ""
+            reply_hint = (f"   antworten → message.py --offer-id {ev['offer_id']} "
+                          f"--interest-id {ev['interest_id']} --kind accept|propose|text")
+            if kind == "propose":
+                matches.append(
+                    f"📍 Vorschlag von deinem Match ({client.fingerprint(sender)}):\n"
+                    f"   {body.get('place','?')} um {body.get('time','?')}{note}\n{reply_hint}"
+                )
+            elif kind == "accept":
+                matches.append(f"🤝 Dein Match hat zugesagt!{note}\n"
+                               f"   Treffen steht — viel Spaß!")
+            elif kind == "decline":
+                matches.append(f"❌ Dein Match hat den Vorschlag abgelehnt.{note}\n{reply_hint}")
+            else:
+                matches.append(f"💬 Nachricht von deinem Match ({client.fingerprint(sender)}):"
+                               f"{note}\n{reply_hint}")
     seen["inbox_after_id"] = after_id
     return incoming, matches
 

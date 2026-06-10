@@ -63,6 +63,14 @@ CREATE TABLE IF NOT EXISTS blocklist (
     agent_id TEXT PRIMARY KEY
 );
 
+CREATE TABLE IF NOT EXISTS match_messages (
+    id          TEXT PRIMARY KEY,
+    interest_id TEXT NOT NULL,
+    sender      TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_match_messages ON match_messages (interest_id, sender);
+
 CREATE TABLE IF NOT EXISTS reports (
     id          TEXT PRIMARY KEY,
     offer_id    TEXT NOT NULL,

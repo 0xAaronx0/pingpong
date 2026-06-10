@@ -144,6 +144,19 @@ def main():
             assert offer_id in r.read().decode(), "matched offer must stay listed"
         print("· Offer stays listed after the match")
 
+        # v0.4: negotiation relay — alice proposes, bob receives + accepts
+        out = run(alice, "message.py", "--offer-id", offer_id, "--interest-id", interest_id,
+                  "--kind", "propose", "--place", "Helmi-Platz", "--time", "19:30")
+        assert "Vorschlag gesendet" in out
+        out = run(bob, "poll.py")
+        assert "Vorschlag" in out and "Helmi-Platz" in out and "19:30" in out, out
+        out = run(bob, "message.py", "--offer-id", offer_id, "--interest-id", interest_id,
+                  "--kind", "accept", "--note", "bis gleich!")
+        assert "Zusage gesendet" in out
+        out = run(alice, "poll.py")
+        assert "zugesagt" in out and "bis gleich" in out, out
+        print("· Negotiation relay: propose -> accept, both sides verified")
+
         # accept.py reminds the agent to ask the owner about keeping it listed
         # (checked above in alice's accept output)
 

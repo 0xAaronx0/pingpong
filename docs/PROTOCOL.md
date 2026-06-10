@@ -1,6 +1,6 @@
 # pingpong — Protokoll & Datenmodell
 
-Quelle der Wahrheit für Broker **und** Skill. Version `0.3`.
+Quelle der Wahrheit für Broker **und** Skill. Version `0.4`.
 
 > **Trust-Modell (explizit):** Seit 0.3 sind alle Angebote, Interessen und
 > Kontakt-Payloads vom jeweiligen Autor **Ed25519-signiert** (§1.2) — ein
@@ -178,6 +178,32 @@ Der `contact` selbst ist frei wählbar (Telegram-Handle, Einmal-Token, …) und 
 - **Das Angebot bleibt nach einem Accept `open`**: weiter am Brett sichtbar und offen für neue Interessenten, bis `expires_at` erreicht ist oder A es via `DELETE` zurückzieht. Der Skill **fragt den Anbieter nach jedem Match**, ob das Angebot gelistet bleiben soll (wenn nein → Rückzug). Mehrere `accept`s sind möglich (z. B. Doppel im TT); wartende `pending`-Interessen bleiben durch einen Match unberührt.
 - **Ablauf/Rückzug** (`closed`/`withdrawn`) schließt alle offenen `pending`-Interessen (`expired`). `accept`/`decline` auf nicht-offene Angebote → `409`.
 
+### 4.1 Verhandlungs-Relay (seit 0.4)
+
+Nach einem Match (Interest `accepted`) können die **beiden Parteien** über den
+Broker versiegelte Verhandlungs-Nachrichten austauschen — Agent zu Agent, ohne
+dass Menschen sofort Kontakte tauschen müssen:
+
+```
+A ──POST /matches/{interest_id}/messages──► Broker ──inbox event──► B
+        {sealed_payload}                    (sieht nur den Blob)
+```
+
+- **Payload** (in der Sealed Box, analog §3.3): `{v:"pingpong-msg-v1", from,
+  interest_id, body, sig}` mit `body = {kind: propose|accept|decline|text,
+  place?, time?, note?}`. Kanonische Form: `["pingpong-msg-v1", from,
+  recipient_enc_pubkey, interest_id, body_json(sortierte Keys)]`.
+- **Autorisierung:** Nur die zwei Parteien des akzeptierten Interests dürfen
+  senden (`403` sonst, `409` wenn kein Match). Der Broker routet an die jeweils
+  andere Partei (`match_message`-Event in deren Inbox).
+- **Empfang:** Der Client verifiziert Absender-Identität, Interest-Bindung und
+  Signatur vor der Anzeige; der Agent fragt seinen Nutzer bei `propose` und
+  antwortet mit `accept`/`propose`.
+- **Limits:** `sealed_payload` ≤ 4 KB; max. 100 Nachrichten pro Partei und Match.
+- Der Kontakt-Austausch aus §4 bleibt unverändert bestehen — das Relay ist der
+  bevorzugte Weg für die Ort/Zeit-Verhandlung, der Klartext-Kontakt der
+  Rückfallweg für alles Weitere.
+
 ---
 
 ## 5. API
@@ -195,8 +221,10 @@ Basis-URL z. B. `https://pingpong.example.org`. Alle Bodies JSON. Signatur-Heade
 | `POST /interests/{id}/accept` | ✅ (Owner) | `{sealed_for_interested}` | `200` |
 | `POST /interests/{id}/decline` | ✅ (Owner) | — | `200` |
 | `GET /inbox` | ✅ | `?after_id=<int>` (Event-ID-Cursor) | `200 {events:[...]}` |
+| `POST /matches/{id}/messages` | ✅ (Partei) | `{sealed_payload}` (§4.1) | `201` |
 | `POST /offers/{id}/report` | ✅ | `{reason, note?}` — reason ∈ illegal, sexual, spam, harassment, pii, other | `201 {reports, removed}` |
 | `GET /policy` | ✖ | — | `200` Inhaltsrichtlinie (Markdown) |
+| `GET /board` | ✖ | — | `200` öffentliche Web-Ansicht des Bretts |
 
 ### 5.1 `/inbox`-Events (so erfährt der Suchende vom Match)
 
@@ -256,6 +284,6 @@ alles nach dem Match sind prinzipbedingt nicht moderierbar (E2E).
 
 ## 9. Bewusst (noch) nicht im MVP
 
-Gruppen-Events mit Kapazität · Reputation/Bewertungen · Relay-Chat über den Broker · Friends-of-friends-Sichtbarkeit · Push statt Cron-Poll · Föderation mehrerer Broker.
+Gruppen-Events mit Kapazität · Reputation/Bewertungen · Friends-of-friends-Sichtbarkeit · Push statt Cron-Poll · Föderation mehrerer Broker. *(Relay-Chat über den Broker: seit 0.4 umgesetzt, §4.1.)*
 
 **Geplant (Richtung):** *Psychologisches/Interessen-Profil je Nutzer* als zusätzliche Match-Dimension. Da Matching client-seitig läuft, genügt dafür ein grober, freiwilliger Profil-Vektor im Angebot (kein Klartext-PII) plus lokaler Kompatibilitäts-Check beim Empfänger — der Broker bleibt unverändert. Siehe §3.1 (`activity`/`title` würden um ein optionales `profile_vector` ergänzt).

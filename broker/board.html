@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>pingpong — schwarzes Brett</title>
+<style>
+  :root { color-scheme: light dark;
+    --bg:#faf9f5; --card:#ffffff; --text:#1a1a17; --muted:#6b6a64; --border:#e3e1d9; --accent:#1d9e75; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#1d1c1a; --card:#262522; --text:#ece9e2; --muted:#9b9990; --border:#3a3933; --accent:#5dcaa5; }
+  }
+  * { box-sizing:border-box; margin:0; }
+  body { font-family:-apple-system,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--text);
+         max-width:760px; margin:0 auto; padding:24px 16px 48px; line-height:1.5; }
+  h1 { font-size:22px; font-weight:600; margin-bottom:4px; }
+  .sub { color:var(--muted); font-size:14px; margin-bottom:20px; }
+  .filters { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:20px; }
+  select, input { font:inherit; padding:8px 10px; border:1px solid var(--border); border-radius:8px;
+                  background:var(--card); color:var(--text); }
+  input { flex:1; min-width:200px; }
+  .card { background:var(--card); border:1px solid var(--border); border-radius:12px;
+          padding:14px 16px; margin-bottom:10px; }
+  .card .top { display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+  .act { font-weight:600; }
+  .cell { font-size:12px; color:var(--muted); font-family:ui-monospace,monospace; }
+  .title { margin-top:2px; }
+  .meta { font-size:13px; color:var(--muted); margin-top:6px; }
+  .empty { text-align:center; color:var(--muted); padding:48px 0; }
+  .foot { margin-top:28px; font-size:12px; color:var(--muted); }
+  .foot a { color:var(--accent); }
+  .badge { display:inline-block; font-size:11px; border:1px solid var(--border); border-radius:99px;
+           padding:1px 8px; color:var(--muted); margin-left:6px; }
+</style>
+</head>
+<body>
+<h1>pingpong 🏓</h1>
+<div class="sub">Spontane Verabredungen in deiner Nähe — pseudonym, signiert, Kontakte nur nach beidseitigem Ja.</div>
+<div class="filters">
+  <select id="activity">
+    <option value="">Alle Aktivitäten</option>
+  </select>
+  <input id="cells" placeholder="Geohash-Zellen (optional, z. B. u33dck,u33dcm)" spellcheck="false">
+</div>
+<div id="list"><div class="empty">Lade Angebote …</div></div>
+<div class="foot">
+  Nur öffentliche Felder sichtbar — Kontaktdaten sind Ende-zu-Ende-versiegelt. Mitmachen: pingpong-Skill für
+  <a href="https://github.com/NousResearch/hermes-agent">Hermes</a> oder Claude installieren.
+  · <a href="/policy">Inhaltsrichtlinie</a> · Aktualisiert sich jede Minute.
+</div>
+<script>
+const LABELS = { table_tennis:"Tischtennis", running:"Laufen", cycling:"Radfahren", bouldering:"Bouldern",
+  tennis:"Tennis", basketball:"Basketball", football:"Fußball", badminton:"Badminton", swimming:"Schwimmen",
+  walk:"Spaziergang", board_games:"Brettspiele", coffee:"Kaffee", beer:"Bier", lunch:"Mittagessen", other:"Sonstiges" };
+const ICONS = { table_tennis:"🏓", running:"🏃", cycling:"🚴", bouldering:"🧗", tennis:"🎾", basketball:"🏀",
+  football:"⚽", badminton:"🏸", swimming:"🏊", walk:"🚶", board_games:"🎲", coffee:"☕", beer:"🍺", lunch:"🥗", other:"✨" };
+const sel = document.getElementById("activity");
+for (const [k, v] of Object.entries(LABELS)) sel.add(new Option(v, k));
+
+function fmt(iso) {
+  const d = new Date(iso);
+  return d.toLocaleString("de-DE", { weekday:"short", hour:"2-digit", minute:"2-digit" });
+}
+function esc(s) { const d = document.createElement("div"); d.textContent = s ?? ""; return d.innerHTML; }
+
+async function load() {
+  const p = new URLSearchParams();
+  if (sel.value) p.set("activity", sel.value);
+  const cells = document.getElementById("cells").value.trim();
+  if (cells) p.set("cells", cells);
+  let offers = [];
+  try {
+    const r = await fetch("/offers?" + p, { cache:"no-store" });
+    if (!r.ok) throw new Error(await r.text());
+    offers = await r.json();
+  } catch (e) {
+    document.getElementById("list").innerHTML = '<div class="empty">Fehler beim Laden: ' + esc(String(e.message).slice(0,120)) + "</div>";
+    return;
+  }
+  if (!offers.length) {
+    document.getElementById("list").innerHTML = '<div class="empty">Gerade keine offenen Angebote' + (cells || sel.value ? " für diesen Filter" : "") + ". Sei die erste Person! 🏓</div>";
+    return;
+  }
+  document.getElementById("list").innerHTML = offers.map(o => `
+    <div class="card">
+      <div class="top">
+        <span class="act">${ICONS[o.activity] ?? "✨"} ${esc(LABELS[o.activity] ?? o.activity)}</span>
+        <span class="cell">Zelle ${esc(o.geocell)}</span>
+      </div>
+      ${o.title ? `<div class="title">${esc(o.title)}</div>` : ""}
+      ${o.note ? `<div class="meta">${esc(o.note)}</div>` : ""}
+      <div class="meta">⏰ ${fmt(o.earliest)} – ${fmt(o.latest)} <span class="badge">signiert ✓</span></div>
+    </div>`).join("");
+}
+sel.addEventListener("change", load);
+document.getElementById("cells").addEventListener("change", load);
+load();
+setInterval(load, 60000);
+</script>
+</body>
+</html>

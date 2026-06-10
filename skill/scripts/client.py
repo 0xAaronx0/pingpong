@@ -77,6 +77,14 @@ def contact_canonical(from_id: str, recipient_enc_pubkey: str, offer_id: str,
                    offer_id, contact_json])
 
 
+def message_canonical(from_id: str, recipient_enc_pubkey: str, interest_id: str,
+                      body: dict) -> bytes:
+    body_json = json.dumps(body, sort_keys=True, separators=(",", ":"),
+                           ensure_ascii=True)
+    return _canon(["pingpong-msg-v1", from_id, recipient_enc_pubkey,
+                   interest_id, body_json])
+
+
 def verify_sig(agent_id: str, sig_b64: str, canonical: bytes) -> bool:
     try:
         VerifyKey(b64u_dec(agent_id)).verify(canonical, b64u_dec(sig_b64))
@@ -162,6 +170,30 @@ class Identity:
         }
         box = SealedBox(PublicKey(b64u_dec(recipient_enc_pubkey)))
         return b64u(box.encrypt(json.dumps(payload).encode()))
+
+    def seal_message(self, recipient_enc_pubkey: str, interest_id: str, body: dict) -> str:
+        """Seal a negotiation message (PROTOCOL §4.1) to the counterpart,
+        signed and bound to this match."""
+        payload = {
+            "v": "pingpong-msg-v1",
+            "from": self.agent_id,
+            "interest_id": interest_id,
+            "body": body,
+            "sig": self.sign_blob(message_canonical(self.agent_id, recipient_enc_pubkey,
+                                                    interest_id, body)),
+        }
+        box = SealedBox(PublicKey(b64u_dec(recipient_enc_pubkey)))
+        return b64u(box.encrypt(json.dumps(payload).encode()))
+
+    def unseal_message(self, blob_b64: str, expected_from: str, interest_id: str) -> dict:
+        payload = json.loads(SealedBox(self.x_sk).decrypt(b64u_dec(blob_b64)))
+        frm, body = payload.get("from"), payload.get("body")
+        if (frm != expected_from or payload.get("interest_id") != interest_id
+                or not isinstance(body, dict)
+                or not verify_sig(frm, payload.get("sig", ""),
+                                  message_canonical(frm, self.enc_pubkey, interest_id, body))):
+            raise ValueError("message payload failed verification")
+        return body
 
     def unseal_contact(self, blob_b64: str, expected_from: str, offer_id: str) -> dict:
         """Unseal and verify a contact payload. Raises ValueError on any

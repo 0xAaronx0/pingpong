@@ -382,6 +382,48 @@ def test_policy_endpoint():
     assert r.status_code == 200 and "Inhaltsrichtlinie" in r.text
 
 
+def test_board_endpoint():
+    client = TestClient(broker_app.app)
+    r = client.get("/board")
+    assert r.status_code == 200 and "schwarzes Brett" in r.text
+    r = client.get("/", follow_redirects=False)
+    assert r.status_code in (302, 307) and r.headers["location"] == "/board"
+
+
+def test_match_relay():
+    """PROTOCOL §4.1: only the two parties of an ACCEPTED interest can relay
+    sealed messages; the blob lands in the counterpart's inbox."""
+    client = TestClient(broker_app.app)
+    alice, bob, eve = Identity(), Identity(), Identity()
+    offer_id = make_offer(client, alice, activity="tennis").json()["offer_id"]
+    interest_id = make_interest(client, bob, offer_id, alice).json()["interest_id"]
+
+    blob = b64u(os.urandom(60))
+    # before accept: no relay
+    r = signed_post(client, bob, f"/matches/{interest_id}/messages", {"sealed_payload": blob})
+    assert r.status_code == 409
+
+    signed_post(client, alice, f"/interests/{interest_id}/accept", {
+        "sealed_for_interested": alice.seal_to(bob.enc_pubkey, {"t": "@a"})})
+
+    # third party: forbidden
+    r = signed_post(client, eve, f"/matches/{interest_id}/messages", {"sealed_payload": blob})
+    assert r.status_code == 403
+
+    # bob -> alice: routed to alice's inbox with the sealed blob
+    r = signed_post(client, bob, f"/matches/{interest_id}/messages", {"sealed_payload": blob})
+    assert r.status_code == 201, r.text
+    events = signed_get(client, alice, "/inbox", {"after_id": 0}).json()["events"]
+    msgs = [e for e in events if e["type"] == "match_message" and e["interest_id"] == interest_id]
+    assert msgs and msgs[0]["sealed_payload"] == blob and msgs[0]["offer_id"] == offer_id
+
+    # alice -> bob works too (owner side)
+    r = signed_post(client, alice, f"/matches/{interest_id}/messages", {"sealed_payload": blob})
+    assert r.status_code == 201
+    events = signed_get(client, bob, "/inbox", {"after_id": 0}).json()["events"]
+    assert any(e["type"] == "match_message" for e in events)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     for t in tests:

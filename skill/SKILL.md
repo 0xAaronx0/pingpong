@@ -51,6 +51,7 @@ Alle Skripte: `python ${HERMES_SKILL_DIR}/scripts/<name>.py`. Erstmalig
 | Interesse zeigen | `interest.py --offer-id <id> [--note "..."]` |
 | Interesse annehmen | `accept.py --offer-id <id> --interest-id <id>` |
 | Angebot zurückziehen | `withdraw.py --offer-id <id>` |
+| Match-Nachricht | `message.py --offer-id <id> --interest-id <id> --kind propose\|accept\|decline\|text` |
 | Angebot melden | `report.py --offer-id <id> --reason illegal\|sexual\|spam\|harassment\|pii\|other` |
 
 ## Setup (einmalig)
@@ -72,14 +73,21 @@ Zeitfenster: konkrete Uhrzeit → `--earliest`/`--latest` (ISO 8601 mit Zeitzone
 "die nächsten Stunden" → `--hours N`. Ort kommt automatisch aus dem Profil.
 Den zurückgegebenen `offer_id` dem Nutzer nennen.
 
-**Match-Check (Cron).** Richte einen Hermes-Cron-Job ein, der diesen Skill lädt
-und `poll.py` ausführt, z. B. alle 5 Minuten. `poll.py` gibt entweder eine
-Zusammenfassung (neue Angebote / eingehendes Interesse / bestätigte Matches) oder
-exakt `[SILENT]` aus. **Gib die Ausgabe unverändert weiter; bei `[SILENT]` sende
-nichts.** Beispiel-Cron-Prompt:
+**Match-Check (Cron).** Richte einen wiederkehrenden Job ein, der `poll.py` alle
+~5 Minuten ausführt. `poll.py` gibt entweder eine Zusammenfassung (neue Angebote /
+eingehendes Interesse / Matches / Verhandlungs-Nachrichten) oder exakt `[SILENT]`
+aus. **Gib die Ausgabe unverändert weiter; bei `[SILENT]` sende nichts.**
+Der Poll ist deterministisch — am besten als LLM-freier Job (kostet nichts):
 
-> Lade den Skill `pingpong` und führe `poll.py` aus. Gib die Ausgabe wörtlich an
-> mich weiter. Wenn die Ausgabe `[SILENT]` ist, antworte nur `[SILENT]`.
+- **Hermes:** `hermes cron create "every 5m" --name pingpong-poll --no-agent
+  --script pingpong-poll.sh --deliver telegram` — mit einem Wrapper-Skript, das
+  `PINGPONG_*`-Env setzt, `poll.py` ausführt und `[SILENT]`-Ausgaben verschluckt
+  (leeres stdout = keine Zustellung).
+- **Claude (Code/Desktop):** Wenn der Nutzer den Match-Check einrichten will,
+  lege einen lokalen wiederkehrenden Cron-Job (alle 5 Min) an, der `poll.py`
+  ausführt; ist die Ausgabe nicht `[SILENT]`, informiere den Nutzer (z. B. per
+  Push-Notification). Hinweis an den Nutzer: läuft nur, solange der Rechner an
+  ist — für 24/7 einen Server-Agenten (z. B. Hermes auf einem VPS) nutzen.
 
 **Auf einen Vorschlag reagieren.** Sagt der Nutzer zu einem von `poll.py`
 vorgeschlagenen Angebot Ja, rufe `interest.py --offer-id <id>` (optional `--note`).
@@ -91,6 +99,14 @@ gibt beiden Seiten die Kontakte frei — danach den konkreten Treffpunkt klären
 Das Angebot bleibt danach **weiter gelistet** (bis Ablauf), weitere Interessenten
 sind möglich. **Frage den Nutzer nach jedem Match**, ob das Angebot gelistet
 bleiben soll; wenn nein → `withdraw.py --offer-id <id>`.
+
+**Nach dem Match verhandeln (§4.1).** Statt nur Kontakte zu tauschen, können
+die Agenten Ort & Zeit direkt aushandeln — versiegelt über den Broker. Wenn der
+Nutzer nach einem Match einen konkreten Vorschlag machen will:
+`message.py --kind propose --place "..." --time "..."`. Meldet `poll.py` einen
+eingehenden Vorschlag, **frag den Nutzer** („Passt dir 19:30 am Helmi-Platz?")
+und antworte mit `--kind accept` (oder `propose` für einen Gegenvorschlag).
+Bei `accept` steht das Treffen — fasse es dem Nutzer zusammen.
 
 **Anstößiges Angebot melden.** Will der Nutzer ein Angebot melden (illegal,
 sexualisiert, Spam, Belästigung, persönliche Daten), rufe `report.py` mit dem
