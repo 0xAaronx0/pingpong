@@ -2,14 +2,14 @@
 # Kopieren nach  $PINGPONG_STATE_DIR/profile.yaml  (Default ~/.pingpong/profile.yaml)
 # und anpassen. Diese Datei verlässt deinen Rechner NICHT — das Matching läuft lokal.
 
-# Dein ungefährer Standort. Wird zu einer groben Geohash-Zelle (Stadtviertel)
-# verrechnet; exakte Koordinaten werden NIE veröffentlicht.
+# Dein ungefährer Standort. Wird zu einer groben Geohash-Zelle (Stadtviertel,
+# Präzision 6 ≈ 1.2 km — protokollweit fest) verrechnet; exakte Koordinaten
+# werden NIE veröffentlicht.
 home:
   lat: 52.5200
   lon: 13.4050
 
-geohash_precision: 6   # 6 ≈ 1.2 km Zelle, 5 ≈ 5 km (ländlich)
-radius_rings: 1        # 0 = nur eigene Zelle, 1 = +8 Nachbarzellen, 2 = größerer Ring
+radius_rings: 1        # Suchradius: 0 = nur eigene Zelle, 1 = +8 Nachbarzellen (~3.5 km), 2 = ~6 km
 
 # Aktivitäten, über die du benachrichtigt werden willst (Tags aus PROTOCOL §6).
 # Leere Liste = alles anzeigen.

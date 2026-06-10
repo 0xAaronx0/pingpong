@@ -1,11 +1,16 @@
 """End-to-end integration: real broker server + two agents via the real skill
-scripts. Proves both halves work together over HTTP with signing + sealing.
+scripts. Proves both halves work together over HTTP with signing + sealing,
+including the v0.2 behaviors (offer stays listed after a match) and the
+poison-pill defense (a garbage contact blob must not wedge the poll loop).
 
 Run from the skill/ dir:  python test_integration.py
 Starts its own broker on a free port and cleans up afterwards.
 """
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 import os
 import re
 import subprocess
@@ -23,7 +28,6 @@ PY = sys.executable
 
 PROFILE = """
 home: {{lat: 52.5200, lon: 13.4050}}
-geohash_precision: 6
 radius_rings: 1
 activities: [table_tennis, running]
 contact: {{telegram: "{handle}"}}
@@ -62,6 +66,28 @@ def uuid_after(text, key):
     m = re.search(key + r":\s*([0-9a-f-]{36})", text)
     assert m, f"no {key} in:\n{text}"
     return m.group(1)
+
+
+def raw_signed_post(state_dir, path, payload):
+    """Sign a request with an agent's stored identity, bypassing the skill
+    scripts — used to simulate a malicious/buggy counterpart."""
+    from nacl.signing import SigningKey
+
+    def b64u(b): return base64.urlsafe_b64encode(b).decode().rstrip("=")
+    def b64u_dec(s): return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+    ident = json.load(open(os.path.join(state_dir, "identity.json")))
+    sk = SigningKey(b64u_dec(ident["ed25519_sk"]))
+    body = json.dumps(payload).encode()
+    ts, nonce = str(int(time.time())), b64u(os.urandom(16))
+    canonical = f"POST\n{path}\n{hashlib.sha256(body).hexdigest()}\n{ts}\n{nonce}".encode()
+    req = urllib.request.Request(BASE + path, data=body, method="POST", headers={
+        "X-Agent-Id": ident["agent_id"], "X-Timestamp": ts, "X-Nonce": nonce,
+        "X-Signature": b64u(sk.sign(canonical).signature),
+        "Content-Type": "application/json",
+    })
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        return json.loads(resp.read() or b"{}")
 
 
 def main():
@@ -109,12 +135,36 @@ def main():
         assert "Match" in out and "@alice_tt" in out, out
         print("· Bob sees the match + Alice's contact")
 
-        # Offer is gone from the open board
+        # v0.2: the offer STAYS on the open board after the match
+        with urllib.request.urlopen(BASE + "/offers") as r:
+            assert offer_id in r.read().decode(), "matched offer must stay listed"
+        print("· Offer stays listed after the match")
+
+        # accept.py reminds the agent to ask the owner about keeping it listed
+        # (checked above in alice's accept output)
+
+        # Poison pill: a malicious owner accepts with a garbage contact blob.
+        # Bob's poll must survive it and advance its cursor.
+        offer2 = uuid_after(run(alice, "publish.py", "--activity", "running",
+                                "--title", "zweite Runde", "--hours", "2"), "offer_id")
+        run(bob, "poll.py")  # consume discovery notification
+        interest2 = uuid_after(run(bob, "interest.py", "--offer-id", offer2), "interest_id")
+        garbage = base64.urlsafe_b64encode(os.urandom(64)).decode().rstrip("=")
+        raw_signed_post(alice, f"/interests/{interest2}/accept",
+                        {"sealed_for_interested": garbage})
+        out = run(bob, "poll.py")
+        assert "entschlüsseln" in out, f"expected unseal warning, got:\n{out}"
+        out = run(bob, "poll.py")
+        assert out.strip() == "[SILENT]", f"cursor did not advance past poison event:\n{out}"
+        print("· Poison-pill event survived: warned once, then silent")
+
+        # Withdraw cleanup: alice unlists the first offer ("nein" to keep-listed)
+        run(alice, "withdraw.py", "--offer-id", offer_id)
         with urllib.request.urlopen(BASE + "/offers") as r:
             assert offer_id not in r.read().decode()
-        print("· Offer left the open board")
+        print("· Withdraw unlists the offer")
 
-        print("\nOK: full two-agent flow verified end-to-end")
+        print("\nOK: full two-agent flow + v0.2 behaviors verified end-to-end")
     finally:
         server.terminate()
         try:

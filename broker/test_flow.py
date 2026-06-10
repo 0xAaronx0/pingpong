@@ -1,8 +1,8 @@
-"""End-to-end protocol test: two identities, full double-opt-in handshake,
-with real Ed25519 signing and X25519 sealed-box contact exchange.
+"""Protocol tests: full double-opt-in handshake plus regressions for the v0.2
+review fixes (multi-accept survives sweeps, offers stay listed after a match,
+timestamp normalization, interest dedupe, geocell validation, expiry sweep).
 
-Run:  python -m pytest test_flow.py -q      (or just: python test_flow.py)
-Uses FastAPI's TestClient, so no running server is needed.
+Run:  python test_flow.py   (or pytest). Uses TestClient; no server needed.
 """
 from __future__ import annotations
 
@@ -13,8 +13,9 @@ import os
 import tempfile
 import time
 import uuid
+from datetime import datetime, timedelta, timezone
 
-# Use a throwaway DB so the test never touches real data.
+# Use a throwaway DB so the tests never touch real data.
 os.environ["PINGPONG_DB"] = os.path.join(tempfile.gettempdir(), f"pingpong_test_{uuid.uuid4().hex}.db")
 
 from fastapi.testclient import TestClient
@@ -30,6 +31,10 @@ def b64u(b: bytes) -> str:
 
 def b64u_dec(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+def utc_in(hours: float = 0, seconds: float = 0) -> str:
+    return (datetime.now(timezone.utc) + timedelta(hours=hours, seconds=seconds)).isoformat()
 
 
 class Identity:
@@ -58,8 +63,7 @@ class Identity:
         return b64u(box.encrypt(json.dumps(contact).encode()))
 
     def unseal(self, blob_b64: str) -> dict:
-        box = SealedBox(self.bk)
-        return json.loads(box.decrypt(b64u_dec(blob_b64)))
+        return json.loads(SealedBox(self.bk).decrypt(b64u_dec(blob_b64)))
 
 
 def signed_post(client, ident, path, payload):
@@ -67,76 +71,194 @@ def signed_post(client, ident, path, payload):
     return client.post(path, content=body, headers=ident.headers("POST", path, body))
 
 
-def signed_get(client, ident, path):
-    return client.get(path, headers=ident.headers("GET", path, b""))
+def signed_get(client, ident, path, params=None):
+    qs = ""
+    if params:
+        from urllib.parse import urlencode
+        qs = "?" + urlencode(params)
+    return client.get(path + qs, headers=ident.headers("GET", path, b""))
 
 
-def test_full_handshake():
-    client = TestClient(broker_app.app)
-    alice = Identity()   # offerer
-    bob = Identity()     # interested
-
-    # 1. Alice publishes an offer
-    offer = {
-        "enc_pubkey": alice.enc_pubkey,
-        "activity": "table_tennis",
-        "title": "Tischtennis, locker",
+def make_offer(client, ident, activity="table_tennis", **overrides):
+    body = {
+        "enc_pubkey": ident.enc_pubkey,
+        "activity": activity,
         "geocell": "u33dc0",
-        "earliest": "2026-06-09T18:00:00+00:00",
-        "latest": "2026-06-09T22:00:00+00:00",
-        "note": "Halle oder draussen",
+        "earliest": utc_in(0),
+        "latest": utc_in(hours=4),
     }
-    r = signed_post(client, alice, "/offers", offer)
-    assert r.status_code == 201, r.text
-    offer_id = r.json()["offer_id"]
+    body.update(overrides)
+    return signed_post(client, ident, "/offers", body)
 
-    # 2. Bob discovers it via the public board
+
+def test_full_handshake_offer_stays_listed():
+    """Happy path + v0.2 behavior: offer stays on the board after a match and
+    a second interested party can still be accepted (multi-accept)."""
+    client = TestClient(broker_app.app)
+    alice, bob, charlie = Identity(), Identity(), Identity()
+
+    offer_id = make_offer(client, alice, title="Tischtennis, locker").json()["offer_id"]
+
+    # discovery on the public board, no contact leak
     r = client.get("/offers", params={"cells": "u33dc0,u33dc1", "activity": "table_tennis"})
-    assert r.status_code == 200
     found = [o for o in r.json() if o["id"] == offer_id]
-    assert found and "note" in found[0]
-    assert "sealed_for_owner" not in json.dumps(found[0])  # no contact leaks on the board
+    assert found and "sealed" not in json.dumps(found[0])
 
-    # 3. Bob seals his contact to Alice and expresses interest
+    # bob expresses interest, alice sees + unseals + accepts
     bob_contact = {"telegram": "@bob_pong"}
     r = signed_post(client, bob, f"/offers/{offer_id}/interest", {
         "enc_pubkey": bob.enc_pubkey,
         "sealed_for_owner": bob.seal_to(alice.enc_pubkey, bob_contact),
-        "note": "bin in 20 min da",
     })
-    assert r.status_code == 201, r.text
     interest_id = r.json()["interest_id"]
-
-    # 4. Alice's cron polls her inbox -> sees a new interest
-    r = signed_get(client, alice, "/inbox")
-    assert r.status_code == 200
-    events = r.json()["events"]
-    assert any(e["type"] == "new_interest" and e["interest_id"] == interest_id for e in events)
-
-    # 5. Alice lists interests, unseals Bob's contact
-    r = signed_get(client, alice, f"/offers/{offer_id}/interests")
-    assert r.status_code == 200
-    interest = r.json()[0]
-    assert alice.unseal(interest["sealed_for_owner"]) == bob_contact
-
-    # 6. Alice accepts, sealing her own contact to Bob
-    alice_contact = {"telegram": "@alice_tt"}
+    interests = signed_get(client, alice, f"/offers/{offer_id}/interests").json()
+    assert alice.unseal(interests[0]["sealed_for_owner"]) == bob_contact
     r = signed_post(client, alice, f"/interests/{interest_id}/accept", {
-        "sealed_for_interested": alice.seal_to(bob.enc_pubkey, alice_contact),
+        "sealed_for_interested": alice.seal_to(bob.enc_pubkey, {"telegram": "@alice_tt"}),
     })
     assert r.status_code == 200, r.text
 
-    # 7. Bob polls inbox -> interest_accepted, unseals Alice's contact
-    r = signed_get(client, bob, "/inbox")
-    accepted = [e for e in r.json()["events"] if e["type"] == "interest_accepted"]
-    assert accepted, "Bob never received acceptance"
-    assert bob.unseal(accepted[0]["sealed_for_interested"]) == alice_contact
+    # bob learns alice's contact via inbox
+    events = signed_get(client, bob, "/inbox", {"after_id": 0}).json()["events"]
+    accepted = [e for e in events if e["type"] == "interest_accepted"]
+    assert bob.unseal(accepted[0]["sealed_for_interested"]) == {"telegram": "@alice_tt"}
 
-    # 8. Offer is now matched
-    r = client.get("/offers")
-    assert offer_id not in [o["id"] for o in r.json()]  # matched offers drop off the open board
+    # v0.2: the offer is STILL listed after the match...
+    r = client.get("/offers", params={"cells": "u33dc0"})
+    assert offer_id in [o["id"] for o in r.json()], "matched offer must stay on the board"
 
-    print("OK: full handshake + sealed contact exchange verified")
+    # ...and charlie can still express interest and be accepted, even though
+    # sweeps ran in between (regression: sweep used to expire pending interests
+    # on matched offers).
+    r = signed_post(client, charlie, f"/offers/{offer_id}/interest", {
+        "enc_pubkey": charlie.enc_pubkey,
+        "sealed_for_owner": charlie.seal_to(alice.enc_pubkey, {"telegram": "@charlie"}),
+    })
+    assert r.status_code == 201, r.text
+    charlie_interest = r.json()["interest_id"]
+    client.get("/offers")  # extra sweep trigger, must not kill charlie's pending interest
+    r = signed_post(client, alice, f"/interests/{charlie_interest}/accept", {
+        "sealed_for_interested": alice.seal_to(charlie.enc_pubkey, {"telegram": "@alice_tt"}),
+    })
+    assert r.status_code == 200, f"multi-accept broken: {r.text}"
+
+
+def test_duplicate_interest_rejected():
+    client = TestClient(broker_app.app)
+    alice, bob = Identity(), Identity()
+    offer_id = make_offer(client, alice, activity="running").json()["offer_id"]
+    payload = {
+        "enc_pubkey": bob.enc_pubkey,
+        "sealed_for_owner": bob.seal_to(alice.enc_pubkey, {"t": "@b"}),
+    }
+    assert signed_post(client, bob, f"/offers/{offer_id}/interest", payload).status_code == 201
+    r = signed_post(client, bob, f"/offers/{offer_id}/interest", payload)
+    assert r.status_code == 409, f"duplicate interest must 409, got {r.status_code}"
+    # exactly one inbox event for the owner
+    events = signed_get(client, alice, "/inbox", {"after_id": 0}).json()["events"]
+    assert len([e for e in events if e["type"] == "new_interest"
+                and e["offer_id"] == offer_id]) == 1
+
+
+def test_timestamp_validation_and_normalization():
+    client = TestClient(broker_app.app)
+    alice = Identity()
+
+    # rejected: naive datetime, garbage, inverted window, past window
+    for bad in (
+        {"latest": "2026-06-10T22:00:00"},                       # no timezone
+        {"latest": "not-a-date"},
+        {"earliest": utc_in(hours=3), "latest": utc_in(hours=1)},  # inverted
+        {"earliest": utc_in(hours=-5), "latest": utc_in(hours=-1)},  # already past
+    ):
+        r = make_offer(client, alice, **bad)
+        assert r.status_code == 422, f"{bad} should 422, got {r.status_code}: {r.text}"
+
+    # +02:00 input is normalized to UTC on storage
+    tz2 = timezone(timedelta(hours=2))
+    latest_plus2 = (datetime.now(tz2) + timedelta(hours=3)).isoformat()
+    r = make_offer(client, alice, latest=latest_plus2)
+    assert r.status_code == 201, r.text
+    offer = client.get(f"/offers/{r.json()['offer_id']}").json()
+    assert offer["latest"].endswith("+00:00") and offer["earliest"].endswith("+00:00")
+    # and the offer is visible (regression: string-compared expiry)
+    assert offer["status"] == "open"
+
+    # TTL cap is computed temporally, not lexically: 48h window capped at ~24h
+    r = make_offer(client, alice, latest=utc_in(hours=48))
+    expires = datetime.fromisoformat(r.json()["expires_at"])
+    delta_h = (expires - datetime.now(timezone.utc)).total_seconds() / 3600
+    assert 23.5 < delta_h < 24.5, f"TTL cap broken: {delta_h}h"
+
+
+def test_field_validation():
+    client = TestClient(broker_app.app)
+    alice = Identity()
+    assert make_offer(client, alice, geocell="u33dc").status_code == 422      # precision 5
+    assert make_offer(client, alice, geocell="U33DC0").status_code == 422     # uppercase
+    assert make_offer(client, alice, activity="Tischtennis!").status_code == 422
+    assert make_offer(client, alice, enc_pubkey="dG9vc2hvcnQ").status_code == 422  # not 32 bytes
+    r = client.get("/offers", params={"cells": "u33dc0,INVALID"})
+    assert r.status_code == 422
+
+
+def test_expiry_sweep_and_late_accept():
+    client = TestClient(broker_app.app)
+    alice, bob = Identity(), Identity()
+    r = make_offer(client, alice, activity="walk", latest=utc_in(seconds=1.2))
+    offer_id = r.json()["offer_id"]
+    interest_id = signed_post(client, bob, f"/offers/{offer_id}/interest", {
+        "enc_pubkey": bob.enc_pubkey,
+        "sealed_for_owner": bob.seal_to(alice.enc_pubkey, {"t": "@b"}),
+    }).json()["interest_id"]
+
+    time.sleep(1.4)  # let the offer expire
+    r = client.get("/offers", params={"cells": "u33dc0"})
+    assert offer_id not in [o["id"] for o in r.json()], "expired offer still listed"
+
+    # late accept must be rejected deterministically (sweep runs inside accept)
+    r = signed_post(client, alice, f"/interests/{interest_id}/accept", {
+        "sealed_for_interested": alice.seal_to(bob.enc_pubkey, {"t": "@a"}),
+    })
+    assert r.status_code == 409, f"late accept must 409, got {r.status_code}"
+
+
+def test_withdraw_expires_pending():
+    client = TestClient(broker_app.app)
+    alice, bob = Identity(), Identity()
+    offer_id = make_offer(client, alice, activity="coffee").json()["offer_id"]
+    interest_id = signed_post(client, bob, f"/offers/{offer_id}/interest", {
+        "enc_pubkey": bob.enc_pubkey,
+        "sealed_for_owner": bob.seal_to(alice.enc_pubkey, {"t": "@b"}),
+    }).json()["interest_id"]
+
+    r = client.request("DELETE", f"/offers/{offer_id}",
+                       headers=alice.headers("DELETE", f"/offers/{offer_id}", b""))
+    assert r.status_code == 204
+    # accept after withdraw must fail; new interest must fail
+    r = signed_post(client, alice, f"/interests/{interest_id}/accept", {
+        "sealed_for_interested": alice.seal_to(bob.enc_pubkey, {"t": "@a"}),
+    })
+    assert r.status_code == 409
+    r = signed_post(client, Identity(), f"/offers/{offer_id}/interest", {
+        "enc_pubkey": bob.enc_pubkey, "sealed_for_owner": "eA",
+    })
+    assert r.status_code == 404
+
+
+def test_inbox_cursor_incremental():
+    client = TestClient(broker_app.app)
+    alice, bob = Identity(), Identity()
+    offer_id = make_offer(client, alice, activity="beer").json()["offer_id"]
+    signed_post(client, bob, f"/offers/{offer_id}/interest", {
+        "enc_pubkey": bob.enc_pubkey,
+        "sealed_for_owner": bob.seal_to(alice.enc_pubkey, {"t": "@b"}),
+    })
+    events = signed_get(client, alice, "/inbox", {"after_id": 0}).json()["events"]
+    assert events
+    max_id = max(e["id"] for e in events)
+    again = signed_get(client, alice, "/inbox", {"after_id": max_id}).json()["events"]
+    assert again == [], "cursor must make the fetch incremental"
 
 
 def test_rejects_bad_signature():
@@ -144,20 +266,14 @@ def test_rejects_bad_signature():
     alice = Identity()
     body = json.dumps({"activity": "x"}).encode()
     headers = alice.headers("POST", "/offers", body)
-    headers["X-Signature"] = b64u(b"\x00" * 64)  # garbage
-    r = client.post("/offers", content=body, headers=headers)
-    assert r.status_code == 401
+    headers["X-Signature"] = b64u(b"\x00" * 64)
+    assert client.post("/offers", content=body, headers=headers).status_code == 401
 
 
 def test_cannot_interest_own_offer():
     client = TestClient(broker_app.app)
     alice = Identity()
-    r = signed_post(client, alice, "/offers", {
-        "enc_pubkey": alice.enc_pubkey, "activity": "running",
-        "geocell": "u33dc0", "earliest": "2026-06-09T18:00:00+00:00",
-        "latest": "2026-06-09T20:00:00+00:00",
-    })
-    offer_id = r.json()["offer_id"]
+    offer_id = make_offer(client, alice, activity="cycling").json()["offer_id"]
     r = signed_post(client, alice, f"/offers/{offer_id}/interest", {
         "enc_pubkey": alice.enc_pubkey,
         "sealed_for_owner": alice.seal_to(alice.enc_pubkey, {"x": 1}),
@@ -166,7 +282,8 @@ def test_cannot_interest_own_offer():
 
 
 if __name__ == "__main__":
-    test_full_handshake()
-    test_rejects_bad_signature()
-    test_cannot_interest_own_offer()
-    print("All checks passed.")
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    for t in tests:
+        t()
+        print(f"ok  {t.__name__}")
+    print(f"\nAll {len(tests)} checks passed.")

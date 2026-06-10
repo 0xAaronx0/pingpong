@@ -33,8 +33,9 @@ def main() -> None:
     home = profile.get("home") or {}
     if "lat" not in home or "lon" not in home:
         raise SystemExit("profile.yaml needs home.lat and home.lon")
-    precision = int(profile.get("geohash_precision", 6))
-    geocell = geo.encode(float(home["lat"]), float(home["lon"]), precision)
+    # Precision is pinned protocol-wide to 6 (PROTOCOL §2) so publishers and
+    # searchers always meet on identical cell strings.
+    geocell = geo.encode(float(home["lat"]), float(home["lon"]), 6)
 
     now = datetime.now(timezone.utc)
     earliest = args.earliest or now.isoformat()

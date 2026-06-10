@@ -12,13 +12,16 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import sqlite3
 import time
 import uuid
 from collections import defaultdict
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import Response
 
 import crypto
 import db
@@ -28,6 +31,10 @@ MAX_OPEN_OFFERS = int(os.environ.get("PINGPONG_MAX_OPEN_OFFERS", "5"))
 RATE_PER_MIN = int(os.environ.get("PINGPONG_RATE_PER_MIN", "30"))
 CLOCK_SKEW = 120          # seconds, §1.1
 NONCE_TTL = 300           # seconds to remember a nonce for replay protection
+
+GEOCELL_RE = re.compile(r"^[0123456789bcdefghjkmnpqrstuvwxyz]{6}$")  # geohash precision 6, §2
+ACTIVITY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")                  # §6 tag shape
+MAX_QUERY_CELLS = 128
 
 OFFER_PUBLIC_FIELDS = (
     "id", "agent_id", "enc_pubkey", "activity", "title",
@@ -122,10 +129,41 @@ def _require(data: dict, *fields: str) -> None:
         raise HTTPException(422, f"missing fields: {', '.join(missing)}")
 
 
-def _capped(s: str | None, n: int) -> str | None:
+def _capped(s, n: int):
     if s is not None and len(s) > n:
         raise HTTPException(422, f"field too long (max {n})")
     return s
+
+
+def _parse_ts(value, field: str) -> datetime:
+    """Parse a client timestamp, require a timezone, return it in UTC.
+
+    All timestamps are normalized to one canonical string shape before storage
+    (see db.now_iso) — lexicographic comparison in SQL is only valid under that
+    invariant."""
+    if not isinstance(value, str):
+        raise HTTPException(422, f"{field}: ISO-8601 string required")
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00").replace("z", "+00:00"))
+    except ValueError:
+        raise HTTPException(422, f"{field}: invalid ISO-8601 timestamp")
+    if dt.tzinfo is None:
+        raise HTTPException(422, f"{field}: timezone offset required")
+    return dt.astimezone(timezone.utc)
+
+
+def _iso(dt: datetime) -> str:
+    return dt.isoformat(timespec="microseconds")
+
+
+def _valid_pubkey(value, field: str) -> str:
+    import crypto as _c
+    try:
+        if len(_c.b64url_decode(value)) != 32:
+            raise ValueError
+    except (ValueError, TypeError):
+        raise HTTPException(422, f"{field}: must be base64url of 32 bytes")
+    return value
 
 
 # --- offers ---------------------------------------------------------------
@@ -137,24 +175,35 @@ async def create_offer(request: Request):
     _require(data, "enc_pubkey", "activity", "geocell", "earliest", "latest")
     _capped(data.get("title"), 200)
     _capped(data.get("note"), 200)
+    _valid_pubkey(data["enc_pubkey"], "enc_pubkey")
+    if not isinstance(data["geocell"], str) or not GEOCELL_RE.match(data["geocell"]):
+        raise HTTPException(422, "geocell: geohash with precision 6 required")
+    if not isinstance(data["activity"], str) or not ACTIVITY_RE.match(data["activity"]):
+        raise HTTPException(422, "activity: lowercase tag required (see PROTOCOL §6)")
+
+    now = datetime.now(timezone.utc)
+    earliest = _parse_ts(data["earliest"], "earliest")
+    latest = _parse_ts(data["latest"], "latest")
+    if latest <= earliest:
+        raise HTTPException(422, "latest must be after earliest")
+    if latest <= now:
+        raise HTTPException(422, "time window is already in the past")
+    expires = min(latest, now + timedelta(hours=MAX_TTL_HOURS))
 
     db.expire_stale()
     if db.open_offer_count(agent_id) >= MAX_OPEN_OFFERS:
         raise HTTPException(429, f"too many open offers (max {MAX_OPEN_OFFERS})")
 
-    created = db.now_iso()
-    ttl_cap = _iso_plus_hours(created, MAX_TTL_HOURS)
-    expires = min(data["latest"], ttl_cap)
     offer_id = str(uuid.uuid4())
     db.execute(
         "INSERT INTO offers (id, agent_id, enc_pubkey, activity, title, geocell, "
         "earliest, latest, note, created_at, expires_at, status) "
         "VALUES (?,?,?,?,?,?,?,?,?,?,?, 'open')",
         (offer_id, agent_id, data["enc_pubkey"], data["activity"], data.get("title"),
-         data["geocell"], data["earliest"], data["latest"], data.get("note"),
-         created, expires),
+         data["geocell"], _iso(earliest), _iso(latest), data.get("note"),
+         _iso(now), _iso(expires)),
     )
-    return {"offer_id": offer_id, "expires_at": expires}
+    return {"offer_id": offer_id, "expires_at": _iso(expires)}
 
 
 @app.get("/offers")
@@ -165,6 +214,10 @@ async def list_offers(cells: Optional[str] = None, activity: Optional[str] = Non
     params: list = [db.now_iso()]
     if cells:
         cell_list = [c.strip() for c in cells.split(",") if c.strip()]
+        if len(cell_list) > MAX_QUERY_CELLS:
+            raise HTTPException(422, f"too many cells (max {MAX_QUERY_CELLS})")
+        if any(not GEOCELL_RE.match(c) for c in cell_list):
+            raise HTTPException(422, "cells: geohash precision 6 required")
         if cell_list:
             sql += f" AND geocell IN ({','.join('?' * len(cell_list))})"
             params += cell_list
@@ -193,12 +246,12 @@ async def withdraw_offer(offer_id: str, request: Request):
         raise HTTPException(404, "offer not found")
     if offer["agent_id"] != agent_id:
         raise HTTPException(403, "not your offer")
-    db.execute("UPDATE offers SET status='withdrawn' WHERE id=?", (offer_id,))
-    db.execute(
-        "UPDATE interests SET status='expired' WHERE offer_id=? AND status='pending'",
-        (offer_id,),
-    )
-    return JSONResponse(status_code=204, content=None)
+    db.transaction([
+        ("UPDATE offers SET status='withdrawn' WHERE id=?", (offer_id,)),
+        ("UPDATE interests SET status='expired' WHERE offer_id=? AND status='pending'",
+         (offer_id,)),
+    ])
+    return Response(status_code=204)
 
 
 # --- interests / handshake ------------------------------------------------
@@ -210,6 +263,7 @@ async def express_interest(offer_id: str, request: Request):
     _require(data, "enc_pubkey", "sealed_for_owner")
     _capped(data.get("note"), 200)
     _capped(data.get("sealed_for_owner"), 4096)
+    _valid_pubkey(data["enc_pubkey"], "enc_pubkey")
 
     db.expire_stale()
     offer = db.query_one("SELECT * FROM offers WHERE id=?", (offer_id,))
@@ -219,18 +273,22 @@ async def express_interest(offer_id: str, request: Request):
         raise HTTPException(400, "cannot express interest in your own offer")
 
     interest_id = str(uuid.uuid4())
-    db.execute(
-        "INSERT INTO interests (id, offer_id, agent_id, enc_pubkey, sealed_for_owner, "
-        "note, status, created_at) VALUES (?,?,?,?,?,?, 'pending', ?)",
-        (interest_id, offer_id, agent_id, data["enc_pubkey"], data["sealed_for_owner"],
-         data.get("note"), db.now_iso()),
-    )
-    # Notify the owner (their cron polls /inbox). No sealed payload here — the
-    # owner fetches it via GET /offers/{id}/interests.
-    db.push_event(offer["agent_id"], "new_interest", {
-        "offer_id": offer_id, "interest_id": interest_id,
-        "activity": offer["activity"], "note": data.get("note"),
-    })
+    try:
+        db.transaction([
+            ("INSERT INTO interests (id, offer_id, agent_id, enc_pubkey, sealed_for_owner, "
+             "note, status, created_at) VALUES (?,?,?,?,?,?, 'pending', ?)",
+             (interest_id, offer_id, agent_id, data["enc_pubkey"], data["sealed_for_owner"],
+              data.get("note"), db.now_iso())),
+            # Notify the owner (their cron polls /inbox). No sealed payload here —
+            # the owner fetches it via GET /offers/{id}/interests.
+            ("INSERT INTO events (recipient, type, payload, ts) VALUES (?,?,?,?)",
+             (offer["agent_id"], "new_interest", json.dumps({
+                 "offer_id": offer_id, "interest_id": interest_id,
+                 "activity": offer["activity"], "note": data.get("note")}),
+              db.now_iso())),
+        ])
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "already expressed interest in this offer")
     return {"interest_id": interest_id}
 
 
@@ -257,28 +315,36 @@ async def accept_interest(interest_id: str, request: Request):
     _require(data, "sealed_for_interested")
     _capped(data.get("sealed_for_interested"), 4096)
 
+    db.expire_stale()
     interest = db.query_one("SELECT * FROM interests WHERE id=?", (interest_id,))
     if not interest:
         raise HTTPException(404, "interest not found")
     offer = db.query_one("SELECT * FROM offers WHERE id=?", (interest["offer_id"],))
     if not offer or offer["agent_id"] != agent_id:
         raise HTTPException(403, "not your offer")
+    if offer["status"] != "open":
+        raise HTTPException(409, f"offer is {offer['status']}")
     if interest["status"] != "pending":
         raise HTTPException(409, f"interest is {interest['status']}")
 
-    db.execute("UPDATE interests SET status='accepted' WHERE id=?", (interest_id,))
-    db.execute("UPDATE offers SET status='matched' WHERE id=?", (offer["id"],))
-    # Release the owner's sealed contact to the interested party via their inbox.
-    db.push_event(interest["agent_id"], "interest_accepted", {
-        "offer_id": offer["id"], "interest_id": interest_id,
-        "sealed_for_interested": data["sealed_for_interested"],
-    })
+    # The offer stays open: it remains listed until expiry/withdrawal and further
+    # interests stay acceptable (PROTOCOL §4). Status change + contact release
+    # are atomic so a crash can't strand an accepted interest without its event.
+    db.transaction([
+        ("UPDATE interests SET status='accepted' WHERE id=?", (interest_id,)),
+        ("INSERT INTO events (recipient, type, payload, ts) VALUES (?,?,?,?)",
+         (interest["agent_id"], "interest_accepted", json.dumps({
+             "offer_id": offer["id"], "interest_id": interest_id,
+             "sealed_for_interested": data["sealed_for_interested"]}),
+          db.now_iso())),
+    ])
     return {"status": "accepted"}
 
 
 @app.post("/interests/{interest_id}/decline")
 async def decline_interest(interest_id: str, request: Request):
     agent_id = await verify_signed(request)
+    db.expire_stale()
     interest = db.query_one("SELECT * FROM interests WHERE id=?", (interest_id,))
     if not interest:
         raise HTTPException(404, "interest not found")
@@ -287,27 +353,26 @@ async def decline_interest(interest_id: str, request: Request):
         raise HTTPException(403, "not your offer")
     if interest["status"] != "pending":
         raise HTTPException(409, f"interest is {interest['status']}")
-    db.execute("UPDATE interests SET status='declined' WHERE id=?", (interest_id,))
-    db.push_event(interest["agent_id"], "interest_declined",
-                  {"offer_id": offer["id"], "interest_id": interest_id})
+    db.transaction([
+        ("UPDATE interests SET status='declined' WHERE id=?", (interest_id,)),
+        ("INSERT INTO events (recipient, type, payload, ts) VALUES (?,?,?,?)",
+         (interest["agent_id"], "interest_declined", json.dumps(
+             {"offer_id": offer["id"], "interest_id": interest_id}), db.now_iso())),
+    ])
     return {"status": "declined"}
 
 
 # --- inbox ----------------------------------------------------------------
 
 @app.get("/inbox")
-async def inbox(request: Request, since: Optional[str] = None):
+async def inbox(request: Request, after_id: int = 0):
+    """Incremental fetch keyed on the autoincrement event id — timestamps can
+    collide, ids cannot (the client cursors on the max id it has seen)."""
     agent_id = await verify_signed(request)
-    if since:
-        rows = db.query(
-            "SELECT id, type, payload, ts FROM events WHERE recipient=? AND ts>? ORDER BY ts",
-            (agent_id, since),
-        )
-    else:
-        rows = db.query(
-            "SELECT id, type, payload, ts FROM events WHERE recipient=? ORDER BY ts",
-            (agent_id,),
-        )
+    rows = db.query(
+        "SELECT id, type, payload, ts FROM events WHERE recipient=? AND id>? ORDER BY id",
+        (agent_id, after_id),
+    )
     events = [{"id": r["id"], "type": r["type"], "ts": r["ts"], **json.loads(r["payload"])}
               for r in rows]
     return {"events": events}
@@ -316,10 +381,3 @@ async def inbox(request: Request, since: Optional[str] = None):
 @app.get("/healthz")
 async def healthz():
     return {"ok": True, "ts": db.now_iso()}
-
-
-# --- util -----------------------------------------------------------------
-
-def _iso_plus_hours(iso_ts: str, hours: int) -> str:
-    from datetime import datetime, timedelta
-    return (datetime.fromisoformat(iso_ts) + timedelta(hours=hours)).isoformat()

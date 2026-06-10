@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS interests (
     created_at      TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_interests_offer ON interests (offer_id, status);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_interests_unique ON interests (offer_id, agent_id);
 
 CREATE TABLE IF NOT EXISTS events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,7 +64,11 @@ CREATE TABLE IF NOT EXISTS blocklist (
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    # timespec is pinned so every stored timestamp has the identical shape
+    # ("...±HH:MM" with 6-digit microseconds) — string comparison in SQL is
+    # only sound because all timestamps share this exact format (UTC-normalized
+    # at ingestion, see app._parse_ts).
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
 
 
 def init() -> None:
@@ -88,6 +93,18 @@ def execute(sql: str, params: tuple = ()) -> sqlite3.Cursor:
         cur = conn().execute(sql, params)
         conn().commit()
         return cur
+
+
+def transaction(statements: list) -> None:
+    """Run [(sql, params), ...] atomically: one lock, one commit, rollback on error."""
+    with _lock:
+        try:
+            for sql, params in statements:
+                conn().execute(sql, params)
+            conn().commit()
+        except Exception:
+            conn().rollback()
+            raise
 
 
 def query(sql: str, params: tuple = ()) -> list[sqlite3.Row]:
@@ -115,13 +132,17 @@ def open_offer_count(agent_id: str) -> int:
 
 
 def expire_stale() -> None:
-    """Mark offers whose expiry passed as closed, and their pending interests expired."""
-    ts = now_iso()
-    execute("UPDATE offers SET status='closed' WHERE status='open' AND expires_at<=?", (ts,))
-    execute(
-        "UPDATE interests SET status='expired' WHERE status='pending' AND offer_id IN "
-        "(SELECT id FROM offers WHERE status!='open')",
-    )
+    """Mark offers whose expiry passed as closed, and their pending interests expired.
+
+    The interest sweep is scoped to closed/withdrawn offers only — an offer that
+    already produced a match stays open and its remaining pending interests stay
+    acceptable (PROTOCOL §4)."""
+    transaction([
+        ("UPDATE offers SET status='closed' WHERE status='open' AND expires_at<=?",
+         (now_iso(),)),
+        ("UPDATE interests SET status='expired' WHERE status='pending' AND offer_id IN "
+         "(SELECT id FROM offers WHERE status IN ('closed','withdrawn'))", ()),
+    ])
 
 
 def push_event(recipient: str, type_: str, payload: dict) -> None:

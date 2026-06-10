@@ -38,6 +38,10 @@ def main() -> None:
     print("Match bestätigt! 🎉")
     print(f"  Kontakt der anderen Person: {their_contact}")
     print("  Macht jetzt Ort & Uhrzeit konkret aus.")
+    print()
+    print("Das Angebot bleibt bis zum Ablauf gelistet — weitere Leute können sich melden.")
+    print("FRAGE AN DEN NUTZER: Soll es gelistet bleiben? Wenn nicht:")
+    print(f"  withdraw.py --offer-id {args.offer_id}")
 
 
 if __name__ == "__main__":

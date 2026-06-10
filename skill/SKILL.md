@@ -87,6 +87,9 @@ Sein Kontakt wird dabei versiegelt mitgesendet, aber erst bei Annahme sichtbar.
 **Eingehendes Interesse annehmen.** Meldet `poll.py` Interesse an einem Angebot
 des Nutzers und er will, rufe `accept.py --offer-id <id> --interest-id <id>`. Das
 gibt beiden Seiten die Kontakte frei — danach den konkreten Treffpunkt klären.
+Das Angebot bleibt danach **weiter gelistet** (bis Ablauf), weitere Interessenten
+sind möglich. **Frage den Nutzer nach jedem Match**, ob das Angebot gelistet
+bleiben soll; wenn nein → `withdraw.py --offer-id <id>`.
 
 ## Pitfalls
 

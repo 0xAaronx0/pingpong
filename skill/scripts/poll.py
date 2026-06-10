@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import client
 import geo
+from nacl.exceptions import CryptoError
 
 ACTIVITY_LABELS = {
     "table_tennis": "Tischtennis", "running": "Laufen", "cycling": "Radfahren",
@@ -30,9 +31,10 @@ def watch_cells(profile: dict) -> list[str]:
     home = profile.get("home") or {}
     if "lat" not in home or "lon" not in home:
         raise SystemExit("profile.yaml needs home.lat and home.lon")
-    precision = int(profile.get("geohash_precision", 6))
     rings = int(profile.get("radius_rings", 1))
-    center = geo.encode(float(home["lat"]), float(home["lon"]), precision)
+    # Precision is pinned protocol-wide (PROTOCOL §2); a bigger search radius
+    # comes from more rings, not coarser cells.
+    center = geo.encode(float(home["lat"]), float(home["lon"]), 6)
     return geo.expand(center, rings)
 
 
@@ -63,11 +65,13 @@ def discover(ident, profile, seen) -> list[str]:
 
 def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
     incoming, matches = [], []
-    cursor = seen.get("inbox_cursor")
-    res = client.get("/inbox", ident=ident, params={"since": cursor}) or {"events": []}
-    newest = cursor
+    after_id = int(seen.get("inbox_after_id", 0))
+    res = client.get("/inbox", ident=ident, params={"after_id": after_id}) or {"events": []}
     for ev in res["events"]:
-        newest = ev["ts"] if (newest is None or ev["ts"] > newest) else newest
+        # The cursor advances no matter what happens below: one malformed event
+        # (e.g. a contact blob sealed to the wrong key) must never wedge the
+        # poll loop forever.
+        after_id = max(after_id, int(ev["id"]))
         if ev["type"] == "new_interest":
             note = f" (Notiz: {ev['note']})" if ev.get("note") else ""
             incoming.append(
@@ -75,14 +79,21 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
                 f"   annehmen → accept.py --offer-id {ev['offer_id']} --interest-id {ev['interest_id']}"
             )
         elif ev["type"] == "interest_accepted":
-            contact = ident.unseal(ev["sealed_for_interested"])
+            try:
+                contact = ident.unseal(ev["sealed_for_interested"])
+            except (CryptoError, ValueError, KeyError, TypeError):
+                matches.append(
+                    "⚠️ Eine Annahme kam an, aber der Kontakt ließ sich nicht "
+                    "entschlüsseln (fehlerhaft oder manipuliert) — übersprungen."
+                )
+                continue
             matches.append(
                 f"✅ Match! Deine Anfrage wurde angenommen. Kontakt: {contact}\n"
                 f"   Macht Ort & Uhrzeit konkret aus."
             )
         elif ev["type"] == "interest_declined":
             matches.append("ℹ️ Eine deiner Anfragen wurde abgelehnt.")
-    seen["inbox_cursor"] = newest
+    seen["inbox_after_id"] = after_id
     return incoming, matches
 
 
@@ -93,20 +104,22 @@ def main() -> None:
 
     nearby = discover(ident, profile, seen)
     incoming, matches = process_inbox(ident, seen)
-    client.save_seen(seen)
 
+    # Print before persisting: a duplicate notification next run is recoverable,
+    # a notification marked seen but never delivered is not.
     if not (nearby or incoming or matches):
         print("[SILENT]")
-        return
+    else:
+        blocks = []
+        if matches:
+            blocks.append("\n".join(matches))
+        if incoming:
+            blocks.append("Eingehendes Interesse:\n" + "\n".join(incoming))
+        if nearby:
+            blocks.append("Neue Angebote in deiner Nähe:\n" + "\n".join(nearby))
+        print("\n\n".join(blocks))
 
-    blocks = []
-    if matches:
-        blocks.append("\n".join(matches))
-    if incoming:
-        blocks.append("Eingehendes Interesse:\n" + "\n".join(incoming))
-    if nearby:
-        blocks.append("Neue Angebote in deiner Nähe:\n" + "\n".join(nearby))
-    print("\n\n".join(blocks))
+    client.save_seen(seen)
 
 
 if __name__ == "__main__":

@@ -107,15 +107,27 @@ def load_profile() -> dict:
     return yaml.safe_load(open(PROFILE_FILE)) or {}
 
 
+_SEEN_DEFAULTS = {"notified_offers": [], "inbox_after_id": 0}
+
+
 def load_seen() -> dict:
+    seen = dict(_SEEN_DEFAULTS)
     if os.path.exists(SEEN_FILE):
-        return json.load(open(SEEN_FILE))
-    return {"notified_offers": [], "handled_interests": [], "inbox_cursor": None}
+        try:
+            data = json.load(open(SEEN_FILE))
+            if isinstance(data, dict):
+                seen.update(data)
+        except (json.JSONDecodeError, OSError):
+            pass  # corrupt state file: start fresh rather than killing every poll
+    return seen
 
 
 def save_seen(seen: dict) -> None:
     os.makedirs(STATE_DIR, exist_ok=True)
-    json.dump(seen, open(SEEN_FILE, "w"), indent=2)
+    tmp = SEEN_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(seen, f, indent=2)
+    os.replace(tmp, SEEN_FILE)  # atomic: a crash mid-write can't truncate the file
 
 
 # --- broker HTTP ----------------------------------------------------------
