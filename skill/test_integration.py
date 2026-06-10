@@ -46,10 +46,14 @@ def wait_health(timeout=20):
     raise RuntimeError("broker did not start")
 
 
-def run(state_dir, script, *args):
+def run(state_dir, script, *args, expect_fail=False):
     env = dict(os.environ, PINGPONG_BROKER_URL=BASE, PINGPONG_STATE_DIR=state_dir)
     res = subprocess.run([PY, os.path.join(SCRIPTS, script), *args],
                          cwd=SCRIPTS, env=env, capture_output=True, text=True)
+    if expect_fail:
+        if res.returncode == 0:
+            raise AssertionError(f"{script} unexpectedly succeeded:\n{res.stdout}")
+        return res.stdout + res.stderr
     if res.returncode != 0:
         raise AssertionError(f"{script} failed:\n{res.stdout}\n{res.stderr}")
     return res.stdout
@@ -164,7 +168,21 @@ def main():
             assert offer_id not in r.read().decode()
         print("· Withdraw unlists the offer")
 
-        print("\nOK: full two-agent flow + v0.2 behaviors verified end-to-end")
+        # Moderation: a policy-violating publish is rejected with a policy hint
+        out = run(alice, "publish.py", "--activity", "other",
+                  "--title", "Verkaufe Kokain", expect_fail=True)
+        assert "policy" in out, out
+        print("· Policy filter rejects banned content")
+
+        # Reporting: bob reports alice's remaining offer; dedupe enforced
+        out = run(bob, "report.py", "--offer-id", offer2, "--reason", "spam")
+        assert "Meldung übermittelt" in out
+        out = run(bob, "report.py", "--offer-id", offer2, "--reason", "spam",
+                  expect_fail=True)
+        assert "409" in out, out
+        print("· Report submitted, duplicate rejected")
+
+        print("\nOK: full two-agent flow + v0.3 behaviors verified end-to-end")
     finally:
         server.terminate()
         try:

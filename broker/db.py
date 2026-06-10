@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS offers (
     note        TEXT,
     created_at  TEXT NOT NULL,
     expires_at  TEXT NOT NULL,
-    status      TEXT NOT NULL DEFAULT 'open'
+    status      TEXT NOT NULL DEFAULT 'open',
+    offer_sig   TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_offers_lookup ON offers (status, geocell, activity);
 CREATE INDEX IF NOT EXISTS idx_offers_agent  ON offers (agent_id, status);
@@ -43,7 +44,8 @@ CREATE TABLE IF NOT EXISTS interests (
     sealed_for_owner TEXT NOT NULL,
     note            TEXT,
     status          TEXT NOT NULL DEFAULT 'pending',
-    created_at      TEXT NOT NULL
+    created_at      TEXT NOT NULL,
+    interest_sig    TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_interests_offer ON interests (offer_id, status);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_interests_unique ON interests (offer_id, agent_id);
@@ -60,7 +62,24 @@ CREATE INDEX IF NOT EXISTS idx_events_recipient ON events (recipient, ts);
 CREATE TABLE IF NOT EXISTS blocklist (
     agent_id TEXT PRIMARY KEY
 );
+
+CREATE TABLE IF NOT EXISTS reports (
+    id          TEXT PRIMARY KEY,
+    offer_id    TEXT NOT NULL,
+    reporter    TEXT NOT NULL,
+    reason      TEXT NOT NULL,
+    note        TEXT,
+    created_at  TEXT NOT NULL,
+    UNIQUE (offer_id, reporter)
+);
 """
+
+# Columns added after the first deployment; applied idempotently on init so an
+# existing SQLite volume upgrades in place.
+_MIGRATIONS = [
+    ("offers", "offer_sig", "ALTER TABLE offers ADD COLUMN offer_sig TEXT"),
+    ("interests", "interest_sig", "ALTER TABLE interests ADD COLUMN interest_sig TEXT"),
+]
 
 
 def now_iso() -> str:
@@ -78,6 +97,10 @@ def init() -> None:
     _conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     _conn.row_factory = sqlite3.Row
     _conn.executescript(SCHEMA)
+    for table, column, ddl in _MIGRATIONS:
+        cols = {r["name"] for r in _conn.execute(f"PRAGMA table_info({table})")}
+        if column not in cols:
+            _conn.execute(ddl)
     _conn.commit()
 
 
@@ -141,7 +164,7 @@ def expire_stale() -> None:
         ("UPDATE offers SET status='closed' WHERE status='open' AND expires_at<=?",
          (now_iso(),)),
         ("UPDATE interests SET status='expired' WHERE status='pending' AND offer_id IN "
-         "(SELECT id FROM offers WHERE status IN ('closed','withdrawn'))", ()),
+         "(SELECT id FROM offers WHERE status IN ('closed','withdrawn','removed'))", ()),
     ])
 
 

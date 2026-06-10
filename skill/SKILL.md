@@ -51,6 +51,7 @@ Alle Skripte: `python ${HERMES_SKILL_DIR}/scripts/<name>.py`. Erstmalig
 | Interesse zeigen | `interest.py --offer-id <id> [--note "..."]` |
 | Interesse annehmen | `accept.py --offer-id <id> --interest-id <id>` |
 | Angebot zurückziehen | `withdraw.py --offer-id <id>` |
+| Angebot melden | `report.py --offer-id <id> --reason illegal\|sexual\|spam\|harassment\|pii\|other` |
 
 ## Setup (einmalig)
 
@@ -91,6 +92,10 @@ Das Angebot bleibt danach **weiter gelistet** (bis Ablauf), weitere Interessente
 sind möglich. **Frage den Nutzer nach jedem Match**, ob das Angebot gelistet
 bleiben soll; wenn nein → `withdraw.py --offer-id <id>`.
 
+**Anstößiges Angebot melden.** Will der Nutzer ein Angebot melden (illegal,
+sexualisiert, Spam, Belästigung, persönliche Daten), rufe `report.py` mit dem
+passenden `--reason`. Die Inhaltsrichtlinie liegt unter `GET /policy` am Broker.
+
 ## Pitfalls
 
 - **Kein Profil/keine Broker-URL** → Skripte brechen mit klarer Meldung ab. Erst Setup.
@@ -98,7 +103,13 @@ bleiben soll; wenn nein → `withdraw.py --offer-id <id>`.
 - **Zeiten** immer mit Zeitzone (ISO 8601), sonst interpretiert der Broker falsch.
 - **Kontakt im `note`-Feld? Nein.** `note`/`title` sind öffentlich am Brett — keine
   Klarnamen, Telefonnummern o. Ä. Der Kontakt gehört ausschließlich ins
-  versiegelte `contact:` des Profils.
+  versiegelte `contact:` des Profils. Der Broker **filtert** öffentliche Felder
+  (Inhaltsrichtlinie, `GET /policy`) und lehnt Verstöße mit `422` ab — nenne dem
+  Nutzer dann den Grund aus der Fehlermeldung.
+- **Signatur-Warnungen ernst nehmen.** Meldet ein Skript „keine gültige
+  Signatur" oder „nicht verifizieren", brich ab und informiere den Nutzer —
+  das kann ein Manipulationsversuch sein. Nach einem Match den angezeigten
+  **Key-Fingerprint** im ersten Chat vergleichen lassen.
 - **`poll.py`-Ausgabe nicht umschreiben** — der `[SILENT]`-Marker muss exakt
   durchgereicht werden, sonst spamt der Cron-Job.
 - **Genauer Treffpunkt** ist nicht Teil des Protokolls; er wird nach dem Match

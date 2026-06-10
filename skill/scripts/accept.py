@@ -29,14 +29,23 @@ def main() -> None:
     match = next((i for i in interests if i["id"] == args.interest_id), None)
     if not match:
         raise SystemExit(f"interest {args.interest_id} not found on offer {args.offer_id}")
+    # Never seal to an unverified key (anti-MITM, PROTOCOL §1.2).
+    if not client.verify_interest(match, args.offer_id):
+        raise SystemExit("Interesse hat keine gültige Signatur — breche ab "
+                         "(möglicher Manipulationsversuch).")
 
-    # Their contact (sealed to us) — reveal it now that we're accepting.
-    their_contact = ident.unseal(match["sealed_for_owner"])
-    sealed_back = ident.seal_to(match["enc_pubkey"], contact)
+    # Their contact (sealed + signed to us) — reveal it now that we're accepting.
+    their_contact = ident.unseal_contact(match["sealed_for_owner"],
+                                         expected_from=match["agent_id"],
+                                         offer_id=args.offer_id)
+    sealed_back = ident.seal_contact(match["enc_pubkey"], args.offer_id, contact)
     client.post(f"/interests/{args.interest_id}/accept",
                 {"sealed_for_interested": sealed_back}, ident=ident)
     print("Match bestätigt! 🎉")
     print(f"  Kontakt der anderen Person: {their_contact}")
+    print(f"  Key-Fingerprint Gegenseite: {client.fingerprint(match['agent_id'])}")
+    print(f"  Dein Fingerprint:           {client.fingerprint(ident.agent_id)}")
+    print("  Vergleicht die Fingerprints im ersten Chat — dann ist der Kanal echt.")
     print("  Macht jetzt Ort & Uhrzeit konkret aus.")
     print()
     print("Das Angebot bleibt bis zum Ablauf gelistet — weitere Leute können sich melden.")

@@ -1,14 +1,15 @@
 # pingpong — Protokoll & Datenmodell
 
-Quelle der Wahrheit für Broker **und** Skill. Version `0.2`.
+Quelle der Wahrheit für Broker **und** Skill. Version `0.3`.
 
-> **Trust-Annahme (explizit):** Die Ende-zu-Ende-Versiegelung der Kontakte schützt
-> gegen einen *neugierigen* Broker (er kann gespeicherte Blobs nicht lesen), aber
-> nicht gegen einen *aktiv bösartigen*: Da Interessenten den `enc_pubkey` eines
-> Angebots über ein unsigniertes `GET` beziehen, könnte ein manipulierter Broker
-> eigene Schlüssel unterschieben (MITM). Geplanter Fix (Protokoll-Bump): Anbieter
-> signiert die Offer-Felder inkl. `enc_pubkey` mit Ed25519, Clients verifizieren
-> vor dem Versiegeln.
+> **Trust-Modell (explizit):** Seit 0.3 sind alle Angebote, Interessen und
+> Kontakt-Payloads vom jeweiligen Autor **Ed25519-signiert** (§1.2) — ein
+> manipulierter Broker kann an echten Inhalten nichts mehr verändern und keine
+> Schlüssel unterschieben, ohne dass Clients es erkennen. Restrisiko: Ein
+> vollständig bösartiger Broker könnte *beide* Enden frei erfinden (komplett
+> fabrizierte Identitäten). Dagegen hilft nur Out-of-Band-Verifikation: Beide
+> Seiten bekommen nach dem Match einen **Key-Fingerprint** angezeigt und sollten
+> ihn im ersten direkten Chat vergleichen.
 
 ---
 
@@ -44,6 +45,32 @@ und signiert ihn mit dem Ed25519-Key. Header:
 
 `GET`-Reads, die nur eigene Daten betreffen (`/inbox`, `/offers/{id}/interests`), sind **ebenfalls signiert** — der Broker autorisiert anhand `X-Agent-Id`. Öffentliche Reads (`GET /offers`) sind unsigniert.
 
+### 1.2 Datensignaturen (Anti-MITM)
+
+Zusätzlich zur Transport-Signatur trägt jedes Datenobjekt eine **Autor-Signatur**
+über eine kanonische Form (kompaktes JSON-Array, `ensure_ascii`, keine Spaces):
+
+| Objekt | Kanonische Form | Signiert von |
+|---|---|---|
+| `offer_sig` | `["pingpong-offer-v1", agent_id, enc_pubkey, activity, geocell, earliest, latest, title\|"", note\|""]` | Anbieter |
+| `interest_sig` | `["pingpong-interest-v1", agent_id, enc_pubkey, offer_id]` | Interessent |
+| Kontakt-Payload `sig` | `["pingpong-contact-v1", from, recipient_enc_pubkey, offer_id, contact_json(sortierte Keys)]` | Absender |
+
+Regeln:
+- Zeitstempel werden **vor dem Signieren** in die kanonische UTC-Form gebracht
+  (identisch mit der Speicherform des Brokers); der Broker verifiziert
+  `offer_sig`/`interest_sig` bei der Annahme gegen die gespeicherten Werte (`422`
+  bei Mismatch) — Defense-in-Depth, die eigentliche Sicherheit ist die
+  **clientseitige** Prüfung.
+- Clients **versiegeln nie an einen unverifizierten Schlüssel**: vor `interest`
+  wird `offer_sig` geprüft, vor `accept` wird `interest_sig` geprüft.
+- Die Sealed Box enthält nicht mehr den nackten Kontakt, sondern
+  `{v, from, offer_id, contact, sig}` — der Empfänger prüft Absender-Identität,
+  Offer-Bindung und Signatur (verhindert Vertauschen/Fälschen versiegelter
+  Blobs durch den Broker).
+- **Fingerprint** = erste 12 Hex-Zeichen von `sha256(agent_id)`, gruppiert
+  (`ab12-cd34-ef56`); wird beiden Seiten beim Match angezeigt (Out-of-Band-Check).
+
 ---
 
 ## 2. Geo-Verortung
@@ -76,9 +103,13 @@ und signiert ihn mit dem Ed25519-Key. Header:
   "note":        "Halle oder draußen, egal",  // optional, KEINE PII (Skill warnt)
   "created_at":  "2026-06-09T15:12:00Z",
   "expires_at":  "2026-06-09T22:00:00Z",       // = min(latest, created_at + max_ttl)
-  "status":      "open"                          // open | closed | withdrawn
+  "status":      "open",                         // open | closed | withdrawn | removed
+  "offer_sig":   "base64url ed25519 sig"        // Autor-Signatur, §1.2
 }
 ```
+
+`removed` = durch Moderation entfernt (Filter/Reports, siehe §9); das signierte
+Angebot bleibt als Beleg gespeichert, ist aber nicht mehr gelistet.
 
 **Zeitstempel:** Clients senden ISO 8601 *mit* Zeitzone (`Z` oder Offset); ohne
 Zeitzone lehnt der Broker ab (`422`). Der Broker normalisiert alles auf UTC und
@@ -95,18 +126,30 @@ erzwungen.
   "offer_id":      "uuid",
   "agent_id":      "base64url ed25519 pub (Interessent)",
   "enc_pubkey":    "base64url x25519 pub (Interessent)",
-  "sealed_for_owner": "base64url sealed_box(contact_of_interested -> owner.enc_pubkey)",
+  "sealed_for_owner": "base64url sealed_box(contact_payload -> owner.enc_pubkey)",
   "note":          "bin in 20 min da",   // optional
   "status":        "pending",            // pending | accepted | declined | expired
-  "created_at":    "..."
+  "created_at":    "...",
+  "interest_sig":  "base64url ed25519 sig"  // Autor-Signatur, §1.2
 }
 ```
 
-`sealed_for_owner` ist der Kontakt des Interessenten, **versiegelt an den X25519-Key des Anbieters**. Der Broker kann ihn nicht lesen.
+`sealed_for_owner` ist die Kontakt-Payload des Interessenten, **versiegelt an den X25519-Key des Anbieters**. Der Broker kann sie nicht lesen.
 
-### 3.3 Contact (Klartext, nur clientseitig)
+### 3.3 Contact-Payload (nur clientseitig im Klartext)
 
-Frei wählbar, was zur Koordination reicht — z. B. `{"telegram":"@handle"}` oder ein Einmal-Relay-Token. Wird **nie** unversiegelt übertragen oder gespeichert.
+Innerhalb der Sealed Box steckt seit 0.3 eine signierte Payload:
+
+```jsonc
+{ "v": "pingpong-contact-v1",
+  "from": "agent_id des Absenders",
+  "offer_id": "...",
+  "contact": { "telegram": "@handle" },   // frei wählbar
+  "sig": "ed25519 über die kanonische Form (§1.2)" }
+```
+
+Der `contact` selbst ist frei wählbar (Telegram-Handle, Einmal-Token, …) und wird
+**nie** unversiegelt übertragen oder gespeichert.
 
 ---
 
@@ -152,6 +195,8 @@ Basis-URL z. B. `https://pingpong.example.org`. Alle Bodies JSON. Signatur-Heade
 | `POST /interests/{id}/accept` | ✅ (Owner) | `{sealed_for_interested}` | `200` |
 | `POST /interests/{id}/decline` | ✅ (Owner) | — | `200` |
 | `GET /inbox` | ✅ | `?after_id=<int>` (Event-ID-Cursor) | `200 {events:[...]}` |
+| `POST /offers/{id}/report` | ✅ | `{reason, note?}` — reason ∈ illegal, sexual, spam, harassment, pii, other | `201 {reports, removed}` |
+| `GET /policy` | ✖ | — | `200` Inhaltsrichtlinie (Markdown) |
 
 ### 5.1 `/inbox`-Events (so erfährt der Suchende vom Match)
 
@@ -191,7 +236,25 @@ Unbekanntes → `other` + sprechendes `title`. Erweiterbar; der Skill mappt nat�
 
 ---
 
-## 8. Bewusst (noch) nicht im MVP
+## 8. Moderation
+
+Siehe die öffentliche **Inhaltsrichtlinie** (`broker/CONTENT_POLICY.md`, serviert
+unter `GET /policy`). Durchsetzung dreistufig:
+
+1. **Ingestion-Filter** (`broker/moderation.py`): regelbasierte Prüfung der
+   öffentlichen Felder (`activity`, `title`, `note` — auch Interest-Notes) bei
+   der Annahme; Verstoß → `422` mit Verweis auf `GET /policy`. Erweiterbar um
+   einen semantischen (LLM-)Check hinter demselben Hook.
+2. **Reports**: signiert + dedupliziert pro `(offer, reporter)`; ab
+   `REPORT_THRESHOLD` (Default 3) unabhängigen Meldungen wird das Angebot
+   automatisch `removed` und offene Interessen verfallen.
+3. **Blockliste** pro `agent_id` für Wiederholungstäter.
+
+Signierte Inhalte sind dabei **nicht abstreitbar** (§1.2) — entfernte Angebote
+bleiben als Beleg gespeichert. Grenze: Der versiegelte Kontakt-Austausch und
+alles nach dem Match sind prinzipbedingt nicht moderierbar (E2E).
+
+## 9. Bewusst (noch) nicht im MVP
 
 Gruppen-Events mit Kapazität · Reputation/Bewertungen · Relay-Chat über den Broker · Friends-of-friends-Sichtbarkeit · Push statt Cron-Poll · Föderation mehrerer Broker.
 

@@ -25,10 +25,13 @@ from fastapi.responses import Response
 
 import crypto
 import db
+import moderation
 
 MAX_TTL_HOURS = int(os.environ.get("PINGPONG_MAX_TTL_HOURS", "24"))
 MAX_OPEN_OFFERS = int(os.environ.get("PINGPONG_MAX_OPEN_OFFERS", "5"))
 RATE_PER_MIN = int(os.environ.get("PINGPONG_RATE_PER_MIN", "30"))
+REPORT_THRESHOLD = int(os.environ.get("PINGPONG_REPORT_THRESHOLD", "3"))
+REPORT_REASONS = {"illegal", "sexual", "spam", "harassment", "pii", "other"}
 CLOCK_SKEW = 120          # seconds, §1.1
 NONCE_TTL = 300           # seconds to remember a nonce for replay protection
 
@@ -39,7 +42,10 @@ MAX_QUERY_CELLS = 128
 OFFER_PUBLIC_FIELDS = (
     "id", "agent_id", "enc_pubkey", "activity", "title",
     "geocell", "earliest", "latest", "note", "created_at", "expires_at", "status",
+    "offer_sig",
 )
+
+POLICY_PATH = os.path.join(os.path.dirname(__file__), "CONTENT_POLICY.md")
 
 app = FastAPI(title="pingpong broker", version="0.1")
 
@@ -157,13 +163,36 @@ def _iso(dt: datetime) -> str:
 
 
 def _valid_pubkey(value, field: str) -> str:
-    import crypto as _c
     try:
-        if len(_c.b64url_decode(value)) != 32:
+        if len(crypto.b64url_decode(value)) != 32:
             raise ValueError
     except (ValueError, TypeError):
         raise HTTPException(422, f"{field}: must be base64url of 32 bytes")
     return value
+
+
+# Canonical strings for the data signatures (PROTOCOL §1.2). Must match the
+# client implementation byte for byte.
+
+def _canon(parts: list) -> bytes:
+    return json.dumps(parts, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def offer_canonical(agent_id: str, o: dict) -> bytes:
+    return _canon(["pingpong-offer-v1", agent_id, o["enc_pubkey"], o["activity"],
+                   o["geocell"], o["earliest"], o["latest"],
+                   o.get("title") or "", o.get("note") or ""])
+
+
+def interest_canonical(agent_id: str, enc_pubkey: str, offer_id: str) -> bytes:
+    return _canon(["pingpong-interest-v1", agent_id, enc_pubkey, offer_id])
+
+
+def _check_policy(*texts) -> None:
+    category = moderation.check(*texts)
+    if category:
+        raise HTTPException(
+            422, f"content violates policy ({category}) — see GET /policy")
 
 
 # --- offers ---------------------------------------------------------------
@@ -172,14 +201,16 @@ def _valid_pubkey(value, field: str) -> str:
 async def create_offer(request: Request):
     agent_id = await verify_signed(request)
     data = _json_body(request)
-    _require(data, "enc_pubkey", "activity", "geocell", "earliest", "latest")
+    _require(data, "enc_pubkey", "activity", "geocell", "earliest", "latest", "offer_sig")
     _capped(data.get("title"), 200)
     _capped(data.get("note"), 200)
+    _capped(data.get("offer_sig"), 200)
     _valid_pubkey(data["enc_pubkey"], "enc_pubkey")
     if not isinstance(data["geocell"], str) or not GEOCELL_RE.match(data["geocell"]):
         raise HTTPException(422, "geocell: geohash with precision 6 required")
     if not isinstance(data["activity"], str) or not ACTIVITY_RE.match(data["activity"]):
         raise HTTPException(422, "activity: lowercase tag required (see PROTOCOL §6)")
+    _check_policy(data["activity"], data.get("title"), data.get("note"))
 
     now = datetime.now(timezone.utc)
     earliest = _parse_ts(data["earliest"], "earliest")
@@ -190,6 +221,14 @@ async def create_offer(request: Request):
         raise HTTPException(422, "time window is already in the past")
     expires = min(latest, now + timedelta(hours=MAX_TTL_HOURS))
 
+    # Verify the author's data signature against the values we will store and
+    # serve (forces canonical UTC timestamps; clients verify the same bytes).
+    stored = dict(data, earliest=_iso(earliest), latest=_iso(latest))
+    if not crypto.verify_raw(agent_id, data["offer_sig"],
+                             offer_canonical(agent_id, stored)):
+        raise HTTPException(422, "offer_sig: invalid signature over canonical offer "
+                                 "(send timestamps in canonical UTC form)")
+
     db.expire_stale()
     if db.open_offer_count(agent_id) >= MAX_OPEN_OFFERS:
         raise HTTPException(429, f"too many open offers (max {MAX_OPEN_OFFERS})")
@@ -197,11 +236,11 @@ async def create_offer(request: Request):
     offer_id = str(uuid.uuid4())
     db.execute(
         "INSERT INTO offers (id, agent_id, enc_pubkey, activity, title, geocell, "
-        "earliest, latest, note, created_at, expires_at, status) "
-        "VALUES (?,?,?,?,?,?,?,?,?,?,?, 'open')",
+        "earliest, latest, note, created_at, expires_at, status, offer_sig) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?, 'open', ?)",
         (offer_id, agent_id, data["enc_pubkey"], data["activity"], data.get("title"),
          data["geocell"], _iso(earliest), _iso(latest), data.get("note"),
-         _iso(now), _iso(expires)),
+         _iso(now), _iso(expires), data["offer_sig"]),
     )
     return {"offer_id": offer_id, "expires_at": _iso(expires)}
 
@@ -260,10 +299,15 @@ async def withdraw_offer(offer_id: str, request: Request):
 async def express_interest(offer_id: str, request: Request):
     agent_id = await verify_signed(request)
     data = _json_body(request)
-    _require(data, "enc_pubkey", "sealed_for_owner")
+    _require(data, "enc_pubkey", "sealed_for_owner", "interest_sig")
     _capped(data.get("note"), 200)
     _capped(data.get("sealed_for_owner"), 4096)
+    _capped(data.get("interest_sig"), 200)
     _valid_pubkey(data["enc_pubkey"], "enc_pubkey")
+    _check_policy(data.get("note"))
+    if not crypto.verify_raw(agent_id, data["interest_sig"],
+                             interest_canonical(agent_id, data["enc_pubkey"], offer_id)):
+        raise HTTPException(422, "interest_sig: invalid signature")
 
     db.expire_stale()
     offer = db.query_one("SELECT * FROM offers WHERE id=?", (offer_id,))
@@ -276,9 +320,9 @@ async def express_interest(offer_id: str, request: Request):
     try:
         db.transaction([
             ("INSERT INTO interests (id, offer_id, agent_id, enc_pubkey, sealed_for_owner, "
-             "note, status, created_at) VALUES (?,?,?,?,?,?, 'pending', ?)",
+             "note, status, created_at, interest_sig) VALUES (?,?,?,?,?,?, 'pending', ?, ?)",
              (interest_id, offer_id, agent_id, data["enc_pubkey"], data["sealed_for_owner"],
-              data.get("note"), db.now_iso())),
+              data.get("note"), db.now_iso(), data["interest_sig"])),
             # Notify the owner (their cron polls /inbox). No sealed payload here —
             # the owner fetches it via GET /offers/{id}/interests.
             ("INSERT INTO events (recipient, type, payload, ts) VALUES (?,?,?,?)",
@@ -301,8 +345,8 @@ async def list_interests(offer_id: str, request: Request):
     if offer["agent_id"] != agent_id:
         raise HTTPException(403, "not your offer")
     rows = db.query(
-        "SELECT id, offer_id, agent_id, enc_pubkey, sealed_for_owner, note, status, created_at "
-        "FROM interests WHERE offer_id=? ORDER BY created_at",
+        "SELECT id, offer_id, agent_id, enc_pubkey, sealed_for_owner, note, status, "
+        "created_at, interest_sig FROM interests WHERE offer_id=? ORDER BY created_at",
         (offer_id,),
     )
     return [dict(r) for r in rows]
@@ -360,6 +404,59 @@ async def decline_interest(interest_id: str, request: Request):
              {"offer_id": offer["id"], "interest_id": interest_id}), db.now_iso())),
     ])
     return {"status": "declined"}
+
+
+# --- moderation -------------------------------------------------------------
+
+@app.post("/offers/{offer_id}/report", status_code=201)
+async def report_offer(offer_id: str, request: Request):
+    """Signed, deduplicated abuse report. REPORT_THRESHOLD distinct reporters
+    remove the offer automatically (status 'removed'); the signed offer stays
+    stored as evidence. See CONTENT_POLICY.md."""
+    agent_id = await verify_signed(request)
+    data = _json_body(request)
+    _require(data, "reason")
+    if data["reason"] not in REPORT_REASONS:
+        raise HTTPException(422, f"reason must be one of {sorted(REPORT_REASONS)}")
+    _capped(data.get("note"), 200)
+
+    offer = db.query_one("SELECT * FROM offers WHERE id=?", (offer_id,))
+    if not offer:
+        raise HTTPException(404, "offer not found")
+    if offer["agent_id"] == agent_id:
+        raise HTTPException(400, "cannot report your own offer")
+
+    try:
+        db.execute(
+            "INSERT INTO reports (id, offer_id, reporter, reason, note, created_at) "
+            "VALUES (?,?,?,?,?,?)",
+            (str(uuid.uuid4()), offer_id, agent_id, data["reason"],
+             data.get("note"), db.now_iso()),
+        )
+    except sqlite3.IntegrityError:
+        raise HTTPException(409, "already reported this offer")
+
+    count = db.query_one("SELECT COUNT(DISTINCT reporter) AS n FROM reports WHERE offer_id=?",
+                         (offer_id,))["n"]
+    removed = False
+    if count >= REPORT_THRESHOLD and offer["status"] == "open":
+        db.transaction([
+            ("UPDATE offers SET status='removed' WHERE id=?", (offer_id,)),
+            ("UPDATE interests SET status='expired' WHERE offer_id=? AND status='pending'",
+             (offer_id,)),
+        ])
+        removed = True
+    return {"reports": count, "removed": removed}
+
+
+@app.get("/policy")
+async def policy():
+    """The public content policy (also in the repo as broker/CONTENT_POLICY.md)."""
+    try:
+        with open(POLICY_PATH, encoding="utf-8") as f:
+            return Response(f.read(), media_type="text/markdown; charset=utf-8")
+    except OSError:
+        raise HTTPException(500, "policy file missing")
 
 
 # --- inbox ----------------------------------------------------------------

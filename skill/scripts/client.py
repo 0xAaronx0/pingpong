@@ -18,10 +18,11 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
 
 import yaml
 from nacl.public import PrivateKey, PublicKey, SealedBox
-from nacl.signing import SigningKey
+from nacl.signing import SigningKey, VerifyKey
 
 STATE_DIR = os.path.expanduser(os.environ.get("PINGPONG_STATE_DIR", "~/.pingpong"))
 IDENTITY_FILE = os.path.join(STATE_DIR, "identity.json")
@@ -38,6 +39,68 @@ def b64u(b: bytes) -> str:
 
 def b64u_dec(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
+
+
+# --- data signatures (PROTOCOL §1.2) ---------------------------------------
+# Offers, interests and contact payloads are signed by their author so a
+# tampering broker cannot swap keys or alter fields unnoticed. Canonical form
+# is a compact JSON array — both halves must build it identically.
+
+def canon_ts(value: str) -> str:
+    """Normalize a client timestamp to the protocol's canonical UTC form.
+    Must mirror the broker's normalization exactly, or signatures break."""
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00").replace("z", "+00:00"))
+    if dt.tzinfo is None:
+        raise SystemExit(f"timestamp needs a timezone: {value}")
+    return dt.astimezone(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _canon(parts: list) -> bytes:
+    return json.dumps(parts, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def offer_canonical(o: dict) -> bytes:
+    return _canon(["pingpong-offer-v1", o["agent_id"], o["enc_pubkey"], o["activity"],
+                   o["geocell"], o["earliest"], o["latest"],
+                   o.get("title") or "", o.get("note") or ""])
+
+
+def interest_canonical(agent_id: str, enc_pubkey: str, offer_id: str) -> bytes:
+    return _canon(["pingpong-interest-v1", agent_id, enc_pubkey, offer_id])
+
+
+def contact_canonical(from_id: str, recipient_enc_pubkey: str, offer_id: str,
+                      contact: dict) -> bytes:
+    contact_json = json.dumps(contact, sort_keys=True, separators=(",", ":"),
+                              ensure_ascii=True)
+    return _canon(["pingpong-contact-v1", from_id, recipient_enc_pubkey,
+                   offer_id, contact_json])
+
+
+def verify_sig(agent_id: str, sig_b64: str, canonical: bytes) -> bool:
+    try:
+        VerifyKey(b64u_dec(agent_id)).verify(canonical, b64u_dec(sig_b64))
+        return True
+    except Exception:
+        return False
+
+
+def verify_offer(o: dict) -> bool:
+    return bool(o.get("offer_sig")) and verify_sig(o["agent_id"], o["offer_sig"],
+                                                   offer_canonical(o))
+
+
+def verify_interest(i: dict, offer_id: str) -> bool:
+    return bool(i.get("interest_sig")) and verify_sig(
+        i["agent_id"], i["interest_sig"],
+        interest_canonical(i["agent_id"], i["enc_pubkey"], offer_id))
+
+
+def fingerprint(agent_id: str) -> str:
+    """Short human-comparable key fingerprint. Both people should compare these
+    in their first direct chat — that's what catches a fully-MITMing broker."""
+    h = hashlib.sha256(agent_id.encode()).hexdigest()[:12]
+    return "-".join(h[i:i + 4] for i in (0, 4, 8))
 
 
 # --- identity -------------------------------------------------------------
@@ -82,12 +145,35 @@ class Identity:
             "Content-Type": "application/json",
         }
 
-    def seal_to(self, enc_pubkey_b64: str, contact: dict) -> str:
-        box = SealedBox(PublicKey(b64u_dec(enc_pubkey_b64)))
-        return b64u(box.encrypt(json.dumps(contact).encode()))
+    def sign_blob(self, canonical: bytes) -> str:
+        return b64u(self.ed_sk.sign(canonical).signature)
 
-    def unseal(self, blob_b64: str) -> dict:
-        return json.loads(SealedBox(self.x_sk).decrypt(b64u_dec(blob_b64)))
+    def seal_contact(self, recipient_enc_pubkey: str, offer_id: str, contact: dict) -> str:
+        """Seal a contact to the recipient's X25519 key, with an inner Ed25519
+        signature binding it to us, the recipient key and the offer — so a
+        broker can neither forge contacts nor swap them between matches."""
+        payload = {
+            "v": "pingpong-contact-v1",
+            "from": self.agent_id,
+            "offer_id": offer_id,
+            "contact": contact,
+            "sig": self.sign_blob(contact_canonical(self.agent_id, recipient_enc_pubkey,
+                                                    offer_id, contact)),
+        }
+        box = SealedBox(PublicKey(b64u_dec(recipient_enc_pubkey)))
+        return b64u(box.encrypt(json.dumps(payload).encode()))
+
+    def unseal_contact(self, blob_b64: str, expected_from: str, offer_id: str) -> dict:
+        """Unseal and verify a contact payload. Raises ValueError on any
+        mismatch (wrong sender, wrong offer, bad signature)."""
+        payload = json.loads(SealedBox(self.x_sk).decrypt(b64u_dec(blob_b64)))
+        frm, contact = payload.get("from"), payload.get("contact")
+        if (frm != expected_from or payload.get("offer_id") != offer_id
+                or not isinstance(contact, dict)
+                or not verify_sig(frm, payload.get("sig", ""),
+                                  contact_canonical(frm, self.enc_pubkey, offer_id, contact))):
+            raise ValueError("contact payload failed verification")
+        return contact
 
 
 # --- config / profile / seen ---------------------------------------------

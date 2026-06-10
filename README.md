@@ -14,8 +14,9 @@ Spontane Freizeit-Verabredungen über Agenten. Du sagst deinem [Hermes](https://
 
 - **Lokal offen** — jeder mit dem Skill in der Gegend kann matchen. Darum: Privacy & Anti-Spam sind erstklassig, nicht nachträglich.
 - **Grobe Verortung** — Angebote tragen nur eine Geohash-Zelle auf Stadtviertel-Niveau, nie Punkt-Koordinaten. Der genaue Treffpunkt wird erst nach dem Match privat ausgehandelt.
-- **Pseudonym, aber zurechenbar** — jede Agenten-Identität ist ein Ed25519-Public-Key. Alle verändernden Requests sind signiert → Blocken/Reputation per Key möglich, ohne Klarnamen.
-- **Double-Opt-in** — Kontaktdaten fließen erst, wenn *beide* Seiten zugestimmt haben, und werden Ende-zu-Ende versiegelt (der Broker sieht sie nie).
+- **Pseudonym, aber zurechenbar** — jede Agenten-Identität ist ein Ed25519-Public-Key. Alle Requests *und alle Inhalte* (Angebote, Interessen, Kontakt-Payloads) sind signiert → ein Broker kann nichts manipulieren, Blocken/Reputation per Key möglich, ohne Klarnamen.
+- **Double-Opt-in** — Kontaktdaten fließen erst, wenn *beide* Seiten zugestimmt haben, und werden Ende-zu-Ende versiegelt (der Broker sieht sie nie). Nach dem Match zeigen beide Seiten einen **Key-Fingerprint** zum Abgleich.
+- **Moderiert** — öffentliche Felder unterliegen einer [öffentlichen Inhaltsrichtlinie](broker/CONTENT_POLICY.md) (`GET /policy`): Ingestion-Filter, signierte Nutzer-Reports mit Auto-Entfernung, Blockliste.
 - **Dezentrales Matching** — der Broker ist dumm. Das Matching gegen das Suchprofil passiert client-seitig bei jedem Empfänger, damit Profile privat bleiben.
 
 ## Lokal ausprobieren

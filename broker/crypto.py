@@ -23,6 +23,16 @@ def canonical(method: str, path: str, body: bytes, timestamp: str, nonce: str) -
     return f"{method}\n{path}\n{body_hash}\n{timestamp}\n{nonce}".encode()
 
 
+def verify_raw(agent_id: str, signature_b64: str, message: bytes) -> bool:
+    """Verify an Ed25519 signature by `agent_id` over arbitrary canonical bytes
+    (used for the data signatures of PROTOCOL §1.2)."""
+    try:
+        VerifyKey(b64url_decode(agent_id)).verify(message, b64url_decode(signature_b64))
+        return True
+    except (BadSignatureError, ValueError, TypeError):
+        return False
+
+
 def verify(
     agent_id: str,
     signature_b64: str,

@@ -38,8 +38,10 @@ def main() -> None:
     geocell = geo.encode(float(home["lat"]), float(home["lon"]), 6)
 
     now = datetime.now(timezone.utc)
-    earliest = args.earliest or now.isoformat()
-    latest = args.latest or (now + timedelta(hours=args.hours)).isoformat()
+    # Canonical UTC form before signing — the signature covers exactly the
+    # strings the broker stores and serves (PROTOCOL §1.2).
+    earliest = client.canon_ts(args.earliest or now.isoformat())
+    latest = client.canon_ts(args.latest or (now + timedelta(hours=args.hours)).isoformat())
 
     body = {
         "enc_pubkey": ident.enc_pubkey,
@@ -50,6 +52,8 @@ def main() -> None:
         "latest": latest,
         "note": args.note,
     }
+    body["offer_sig"] = ident.sign_blob(
+        client.offer_canonical({**body, "agent_id": ident.agent_id}))
     res = client.post("/offers", body, ident=ident)
     print(f"Angebot veröffentlicht: {args.activity} in Zelle {geocell}")
     print(f"  Fenster: {earliest} – {latest}")

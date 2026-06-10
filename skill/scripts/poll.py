@@ -43,6 +43,7 @@ def discover(ident, profile, seen) -> list[str]:
     activities = set(profile.get("activities") or [])
     notified = set(seen["notified_offers"])
     lines = []
+    skipped_unsigned = 0
     offers = client.get("/offers", params={"cells": ",".join(cells)}) or []
     for o in offers:
         if o["agent_id"] == ident.agent_id:       # my own offer
@@ -50,6 +51,11 @@ def discover(ident, profile, seen) -> list[str]:
         if activities and o["activity"] not in activities:
             continue
         if o["id"] in notified:
+            continue
+        if not client.verify_offer(o):
+            # unsigned/tampered offer: never suggest it, never seal to its key
+            skipped_unsigned += 1
+            notified.add(o["id"])
             continue
         notified.add(o["id"])
         title = o.get("title") or label(o["activity"])
@@ -59,6 +65,8 @@ def discover(ident, profile, seen) -> list[str]:
             f"   wann: {o['earliest']} – {o['latest']}  (Zelle {o['geocell']})\n"
             f"   interessiert? → interest.py --offer-id {o['id']}"
         )
+    if skipped_unsigned:
+        lines.append(f"⚠️ {skipped_unsigned} Angebot(e) ohne gültige Signatur übersprungen.")
     seen["notified_offers"] = list(notified)
     return lines
 
@@ -80,15 +88,25 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
             )
         elif ev["type"] == "interest_accepted":
             try:
-                contact = ident.unseal(ev["sealed_for_interested"])
-            except (CryptoError, ValueError, KeyError, TypeError):
+                # Learn + verify the owner's identity from the signed offer,
+                # then require the sealed contact to be signed by exactly them.
+                offer = client.get(f"/offers/{ev['offer_id']}")
+                if not client.verify_offer(offer):
+                    raise ValueError("offer signature invalid")
+                contact = ident.unseal_contact(ev["sealed_for_interested"],
+                                               expected_from=offer["agent_id"],
+                                               offer_id=ev["offer_id"])
+            except (CryptoError, ValueError, KeyError, TypeError, client.BrokerError):
                 matches.append(
                     "⚠️ Eine Annahme kam an, aber der Kontakt ließ sich nicht "
-                    "entschlüsseln (fehlerhaft oder manipuliert) — übersprungen."
+                    "entschlüsseln oder verifizieren (fehlerhaft oder manipuliert) "
+                    "— übersprungen."
                 )
                 continue
             matches.append(
                 f"✅ Match! Deine Anfrage wurde angenommen. Kontakt: {contact}\n"
+                f"   Key-Fingerprint Gegenseite: {client.fingerprint(offer['agent_id'])}"
+                f" — vergleicht das im ersten Chat.\n"
                 f"   Macht Ort & Uhrzeit konkret aus."
             )
         elif ev["type"] == "interest_declined":

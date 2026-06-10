@@ -13,6 +13,7 @@ def main() -> None:
     print(f"state_dir:   {client.STATE_DIR}")
     print(f"agent_id:    {ident.agent_id}")
     print(f"enc_pubkey:  {ident.enc_pubkey}")
+    print(f"fingerprint: {client.fingerprint(ident.agent_id)}  (zum Abgleich nach einem Match)")
     print(f"profile:     {'ok' if __import__('os').path.exists(client.PROFILE_FILE) else 'MISSING — copy profile.example.yaml'}")
 
 

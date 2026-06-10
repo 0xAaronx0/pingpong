@@ -34,7 +34,24 @@ def b64u_dec(s: str) -> bytes:
 
 
 def utc_in(hours: float = 0, seconds: float = 0) -> str:
-    return (datetime.now(timezone.utc) + timedelta(hours=hours, seconds=seconds)).isoformat()
+    # canonical UTC form (6-digit microseconds) — identical to broker storage,
+    # so signatures over these strings survive the broker's normalization
+    return (datetime.now(timezone.utc) + timedelta(hours=hours, seconds=seconds)
+            ).isoformat(timespec="microseconds")
+
+
+def _canon(parts: list) -> bytes:
+    return json.dumps(parts, separators=(",", ":"), ensure_ascii=True).encode()
+
+
+def offer_canonical(agent_id: str, o: dict) -> bytes:
+    return _canon(["pingpong-offer-v1", agent_id, o["enc_pubkey"], o["activity"],
+                   o["geocell"], o["earliest"], o["latest"],
+                   o.get("title") or "", o.get("note") or ""])
+
+
+def interest_canonical(agent_id: str, enc_pubkey: str, offer_id: str) -> bytes:
+    return _canon(["pingpong-interest-v1", agent_id, enc_pubkey, offer_id])
 
 
 class Identity:
@@ -58,6 +75,9 @@ class Identity:
             "Content-Type": "application/json",
         }
 
+    def sign_blob(self, canonical: bytes) -> str:
+        return b64u(self.sk.sign(canonical).signature)
+
     def seal_to(self, enc_pubkey_b64: str, contact: dict) -> str:
         box = SealedBox(PublicKey(b64u_dec(enc_pubkey_b64)))
         return b64u(box.encrypt(json.dumps(contact).encode()))
@@ -79,7 +99,7 @@ def signed_get(client, ident, path, params=None):
     return client.get(path + qs, headers=ident.headers("GET", path, b""))
 
 
-def make_offer(client, ident, activity="table_tennis", **overrides):
+def make_offer(client, ident, activity="table_tennis", sign=True, **overrides):
     body = {
         "enc_pubkey": ident.enc_pubkey,
         "activity": activity,
@@ -88,7 +108,20 @@ def make_offer(client, ident, activity="table_tennis", **overrides):
         "latest": utc_in(hours=4),
     }
     body.update(overrides)
+    if sign and "offer_sig" not in body:
+        body["offer_sig"] = ident.sign_blob(offer_canonical(ident.agent_id, body))
     return signed_post(client, ident, "/offers", body)
+
+
+def make_interest(client, ident, offer_id, owner, **overrides):
+    body = {
+        "enc_pubkey": ident.enc_pubkey,
+        "sealed_for_owner": ident.seal_to(owner.enc_pubkey, {"telegram": "@x"}),
+        "interest_sig": ident.sign_blob(
+            interest_canonical(ident.agent_id, ident.enc_pubkey, offer_id)),
+    }
+    body.update(overrides)
+    return signed_post(client, ident, f"/offers/{offer_id}/interest", body)
 
 
 def test_full_handshake_offer_stays_listed():
@@ -106,10 +139,8 @@ def test_full_handshake_offer_stays_listed():
 
     # bob expresses interest, alice sees + unseals + accepts
     bob_contact = {"telegram": "@bob_pong"}
-    r = signed_post(client, bob, f"/offers/{offer_id}/interest", {
-        "enc_pubkey": bob.enc_pubkey,
-        "sealed_for_owner": bob.seal_to(alice.enc_pubkey, bob_contact),
-    })
+    r = make_interest(client, bob, offer_id, alice,
+                      sealed_for_owner=bob.seal_to(alice.enc_pubkey, bob_contact))
     interest_id = r.json()["interest_id"]
     interests = signed_get(client, alice, f"/offers/{offer_id}/interests").json()
     assert alice.unseal(interests[0]["sealed_for_owner"]) == bob_contact
@@ -130,10 +161,7 @@ def test_full_handshake_offer_stays_listed():
     # ...and charlie can still express interest and be accepted, even though
     # sweeps ran in between (regression: sweep used to expire pending interests
     # on matched offers).
-    r = signed_post(client, charlie, f"/offers/{offer_id}/interest", {
-        "enc_pubkey": charlie.enc_pubkey,
-        "sealed_for_owner": charlie.seal_to(alice.enc_pubkey, {"telegram": "@charlie"}),
-    })
+    r = make_interest(client, charlie, offer_id, alice)
     assert r.status_code == 201, r.text
     charlie_interest = r.json()["interest_id"]
     client.get("/offers")  # extra sweep trigger, must not kill charlie's pending interest
@@ -147,12 +175,8 @@ def test_duplicate_interest_rejected():
     client = TestClient(broker_app.app)
     alice, bob = Identity(), Identity()
     offer_id = make_offer(client, alice, activity="running").json()["offer_id"]
-    payload = {
-        "enc_pubkey": bob.enc_pubkey,
-        "sealed_for_owner": bob.seal_to(alice.enc_pubkey, {"t": "@b"}),
-    }
-    assert signed_post(client, bob, f"/offers/{offer_id}/interest", payload).status_code == 201
-    r = signed_post(client, bob, f"/offers/{offer_id}/interest", payload)
+    assert make_interest(client, bob, offer_id, alice).status_code == 201
+    r = make_interest(client, bob, offer_id, alice)
     assert r.status_code == 409, f"duplicate interest must 409, got {r.status_code}"
     # exactly one inbox event for the owner
     events = signed_get(client, alice, "/inbox", {"after_id": 0}).json()["events"]
@@ -174,15 +198,19 @@ def test_timestamp_validation_and_normalization():
         r = make_offer(client, alice, **bad)
         assert r.status_code == 422, f"{bad} should 422, got {r.status_code}: {r.text}"
 
-    # +02:00 input is normalized to UTC on storage
+    # since 0.3 the signature pins the canonical UTC form: a non-canonical
+    # (+02:00) timestamp no longer survives normalization -> 422
     tz2 = timezone(timedelta(hours=2))
     latest_plus2 = (datetime.now(tz2) + timedelta(hours=3)).isoformat()
     r = make_offer(client, alice, latest=latest_plus2)
+    assert r.status_code == 422 and "offer_sig" in r.text, r.text
+
+    # canonical UTC input is stored verbatim, listed, and signed-verifiable
+    r = make_offer(client, alice)
     assert r.status_code == 201, r.text
     offer = client.get(f"/offers/{r.json()['offer_id']}").json()
-    assert offer["latest"].endswith("+00:00") and offer["earliest"].endswith("+00:00")
-    # and the offer is visible (regression: string-compared expiry)
-    assert offer["status"] == "open"
+    assert offer["latest"].endswith("+00:00") and offer["status"] == "open"
+    assert offer["offer_sig"]
 
     # TTL cap is computed temporally, not lexically: 48h window capped at ~24h
     r = make_offer(client, alice, latest=utc_in(hours=48))
@@ -207,10 +235,7 @@ def test_expiry_sweep_and_late_accept():
     alice, bob = Identity(), Identity()
     r = make_offer(client, alice, activity="walk", latest=utc_in(seconds=1.2))
     offer_id = r.json()["offer_id"]
-    interest_id = signed_post(client, bob, f"/offers/{offer_id}/interest", {
-        "enc_pubkey": bob.enc_pubkey,
-        "sealed_for_owner": bob.seal_to(alice.enc_pubkey, {"t": "@b"}),
-    }).json()["interest_id"]
+    interest_id = make_interest(client, bob, offer_id, alice).json()["interest_id"]
 
     time.sleep(1.4)  # let the offer expire
     r = client.get("/offers", params={"cells": "u33dc0"})
@@ -227,10 +252,7 @@ def test_withdraw_expires_pending():
     client = TestClient(broker_app.app)
     alice, bob = Identity(), Identity()
     offer_id = make_offer(client, alice, activity="coffee").json()["offer_id"]
-    interest_id = signed_post(client, bob, f"/offers/{offer_id}/interest", {
-        "enc_pubkey": bob.enc_pubkey,
-        "sealed_for_owner": bob.seal_to(alice.enc_pubkey, {"t": "@b"}),
-    }).json()["interest_id"]
+    interest_id = make_interest(client, bob, offer_id, alice).json()["interest_id"]
 
     r = client.request("DELETE", f"/offers/{offer_id}",
                        headers=alice.headers("DELETE", f"/offers/{offer_id}", b""))
@@ -240,9 +262,7 @@ def test_withdraw_expires_pending():
         "sealed_for_interested": alice.seal_to(bob.enc_pubkey, {"t": "@a"}),
     })
     assert r.status_code == 409
-    r = signed_post(client, Identity(), f"/offers/{offer_id}/interest", {
-        "enc_pubkey": bob.enc_pubkey, "sealed_for_owner": "eA",
-    })
+    r = make_interest(client, Identity(), offer_id, alice)
     assert r.status_code == 404
 
 
@@ -250,10 +270,7 @@ def test_inbox_cursor_incremental():
     client = TestClient(broker_app.app)
     alice, bob = Identity(), Identity()
     offer_id = make_offer(client, alice, activity="beer").json()["offer_id"]
-    signed_post(client, bob, f"/offers/{offer_id}/interest", {
-        "enc_pubkey": bob.enc_pubkey,
-        "sealed_for_owner": bob.seal_to(alice.enc_pubkey, {"t": "@b"}),
-    })
+    make_interest(client, bob, offer_id, alice)
     events = signed_get(client, alice, "/inbox", {"after_id": 0}).json()["events"]
     assert events
     max_id = max(e["id"] for e in events)
@@ -274,11 +291,95 @@ def test_cannot_interest_own_offer():
     client = TestClient(broker_app.app)
     alice = Identity()
     offer_id = make_offer(client, alice, activity="cycling").json()["offer_id"]
-    r = signed_post(client, alice, f"/offers/{offer_id}/interest", {
-        "enc_pubkey": alice.enc_pubkey,
-        "sealed_for_owner": alice.seal_to(alice.enc_pubkey, {"x": 1}),
-    })
+    r = make_interest(client, alice, offer_id, alice)
     assert r.status_code == 400
+
+
+def test_offer_signature_enforced():
+    client = TestClient(broker_app.app)
+    alice = Identity()
+    # missing signature
+    assert make_offer(client, alice, sign=False).status_code == 422
+    # garbage signature
+    assert make_offer(client, alice, offer_sig=b64u(b"\x01" * 64)).status_code == 422
+    # tampered field after signing: sign for title X, send title Y
+    body = {
+        "enc_pubkey": alice.enc_pubkey, "activity": "table_tennis",
+        "geocell": "u33dc0", "earliest": utc_in(0), "latest": utc_in(hours=2),
+        "title": "harmlos",
+    }
+    sig = alice.sign_blob(offer_canonical(alice.agent_id, body))
+    body["title"] = "manipuliert"
+    body["offer_sig"] = sig
+    r = signed_post(client, alice, "/offers", body)
+    assert r.status_code == 422 and "offer_sig" in r.text
+
+
+def test_interest_signature_enforced():
+    client = TestClient(broker_app.app)
+    alice, bob, eve = Identity(), Identity(), Identity()
+    offer_id = make_offer(client, alice, activity="badminton").json()["offer_id"]
+    # signature by the wrong key (eve signs bob's interest)
+    bad_sig = eve.sign_blob(interest_canonical(bob.agent_id, bob.enc_pubkey, offer_id))
+    r = make_interest(client, bob, offer_id, alice, interest_sig=bad_sig)
+    assert r.status_code == 422 and "interest_sig" in r.text
+
+
+def test_moderation_filter():
+    client = TestClient(broker_app.app)
+    alice = Identity()
+    cases = [
+        {"title": "Verkaufe Kokain, treffen am Park"},          # illegal
+        {"note": "mehr Infos: https://spam.example/x"},          # spam/link
+        {"note": "ruf einfach an: 0157 1234 5678"},              # pii/phone
+        {"activity": "sex"},                                      # sexual
+    ]
+    for bad in cases:
+        r = make_offer(client, alice, **bad)
+        assert r.status_code == 422 and "policy" in r.text, f"{bad}: {r.status_code} {r.text}"
+    # legitimate content with a date must pass (no PII false positive)
+    r = make_offer(client, alice, title="Tischtennis im Park",
+                   note="am 10.06.2026, lockeres Spiel")
+    assert r.status_code == 201, r.text
+
+
+def test_report_flow_removes_offer():
+    client = TestClient(broker_app.app)
+    alice, bob = Identity(), Identity()
+    offer_id = make_offer(client, alice, activity="basketball").json()["offer_id"]
+    interest_id = make_interest(client, bob, offer_id, alice).json()["interest_id"]
+
+    # own offer cannot be reported; duplicates rejected
+    assert signed_post(client, alice, f"/offers/{offer_id}/report",
+                       {"reason": "spam"}).status_code == 400
+    reporter1 = Identity()
+    assert signed_post(client, reporter1, f"/offers/{offer_id}/report",
+                       {"reason": "spam"}).status_code == 201
+    assert signed_post(client, reporter1, f"/offers/{offer_id}/report",
+                       {"reason": "spam"}).status_code == 409
+    assert signed_post(client, reporter1, f"/offers/{offer_id}/report",
+                       {"reason": "nonsense"}).status_code == 422
+
+    # threshold (3 distinct reporters) removes the offer
+    r = signed_post(client, Identity(), f"/offers/{offer_id}/report", {"reason": "illegal"})
+    assert r.json()["removed"] is False
+    r = signed_post(client, Identity(), f"/offers/{offer_id}/report", {"reason": "illegal"})
+    assert r.json()["removed"] is True, r.text
+
+    assert client.get(f"/offers/{offer_id}").json()["status"] == "removed"
+    r = client.get("/offers", params={"cells": "u33dc0"})
+    assert offer_id not in [o["id"] for o in r.json()]
+    # pending interest died with it -> accept must fail
+    r = signed_post(client, alice, f"/interests/{interest_id}/accept", {
+        "sealed_for_interested": "eA",
+    })
+    assert r.status_code == 409
+
+
+def test_policy_endpoint():
+    client = TestClient(broker_app.app)
+    r = client.get("/policy")
+    assert r.status_code == 200 and "Inhaltsrichtlinie" in r.text
 
 
 if __name__ == "__main__":
