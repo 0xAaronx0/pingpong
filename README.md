@@ -37,10 +37,13 @@ python test_integration.py          # startet eigenen Broker, spielt alles durch
 1. **`docs/PROTOCOL.md`** — Vertrag festzurren ✅
 2. **`broker/`** — minimaler Dienst, lokal lauffähig ✅ (Unit-Test grün)
 3. **`skill/`** — Hermes-Skill gegen den Broker ✅ (Zwei-Agenten-Integrationstest grün)
-4. **VPS-Deploy** des Brokers + Hermes-Cron-Job einrichten ← als Nächstes
+4. **VPS-Deploy** des Brokers ✅ (live, TLS, Live-Smoke-Test grün)
+5. **Hermes-Cron-Job** einrichten + Skill in den laufenden Hermes-Agenten ← als Nächstes
 
 ## Status
 
-Greenfield-Start 2026-06-09. **MVP funktioniert end-to-end lokal**: Broker +
-Skill, signiert, E2E-versiegelter Double-Opt-in-Handshake, Zwei-Agenten-Flow
-getestet. Offen: Deployment auf VPS, Cron-Anbindung, Anti-Abuse-Härtung.
+Greenfield-Start 2026-06-09. **MVP läuft live**: Broker deployed auf
+`https://pingpong.kitescout.tech` (Hostinger-VPS hinter Traefik, Let's-Encrypt-TLS),
+Image via CI nach `ghcr.io/0xaaronx0/pingpong-broker`. Voller Ablauf (signiert,
+E2E-versiegelter Double-Opt-in) end-to-end über HTTPS verifiziert. Offen:
+Skill in den Hermes-Agenten einspielen + Cron-Poll, Anti-Abuse-Härtung.
