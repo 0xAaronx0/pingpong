@@ -19,7 +19,7 @@ ACTIVITY_LABELS = {
     "bouldering": "Bouldern", "tennis": "Tennis", "basketball": "Basketball",
     "football": "Fußball", "badminton": "Badminton", "swimming": "Schwimmen",
     "walk": "Spaziergang", "board_games": "Brettspiele", "coffee": "Kaffee",
-    "beer": "Bier", "other": "Sonstiges",
+    "beer": "Bier", "lunch": "Mittagessen", "other": "Sonstiges",
 }
 
 

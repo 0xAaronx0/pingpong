@@ -217,7 +217,7 @@ Kontrolliertes Tag-Set für zuverlässiges Matching, plus freies `title`. Start:
 
 ```
 table_tennis, running, cycling, bouldering, tennis, basketball,
-football, badminton, swimming, walk, board_games, coffee, beer, other
+football, badminton, swimming, walk, board_games, coffee, beer, lunch, other
 ```
 
 Unbekanntes → `other` + sprechendes `title`. Erweiterbar; der Skill mappt natürliche Sprache („Tischtennis", „zocken") auf Tags.
