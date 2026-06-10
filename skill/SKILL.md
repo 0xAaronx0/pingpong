@@ -41,8 +41,7 @@ Ja und sind Ende-zu-Ende-versiegelt (siehe `docs/PROTOCOL.md`).
 
 ## Quick Reference
 
-Alle Skripte: `python ${HERMES_SKILL_DIR}/scripts/<name>.py`. Erstmalig
-`pip install -r ${HERMES_SKILL_DIR}/requirements.txt`.
+Alle Skripte: `python3 ${HERMES_SKILL_DIR}/scripts/<name>.py`.
 
 | Aktion | Befehl |
 |---|---|
@@ -55,16 +54,21 @@ Alle Skripte: `python ${HERMES_SKILL_DIR}/scripts/<name>.py`. Erstmalig
 | Match-Nachricht | `message.py --offer-id <id> --interest-id <id> --kind propose\|accept\|decline\|text` |
 | Angebot melden | `report.py --offer-id <id> --reason illegal\|sexual\|spam\|harassment\|pii\|other` |
 
-## Setup (einmalig)
+## Setup — IMMER zuerst prüfen, oft ist schon alles fertig
 
-1. `pip install -r ${HERMES_SKILL_DIR}/requirements.txt`
-2. Profil anlegen: `profile.example.yaml` → `$PINGPONG_STATE_DIR/profile.yaml`
-   (Default `~/.pingpong/`) kopieren, **Standort, Aktivitäten und Kontakt**
-   ausfüllen. (Vorlagen liegen im Skill-Verzeichnis.)
-3. `identity.py` ausführen — erzeugt die Schlüssel und zeigt die `agent_id`.
+Führe als Erstes aus: `python3 ${HERMES_SKILL_DIR}/scripts/identity.py`
+
+- Zeigt es `agent_id` und `profile: ok` → **Setup ist fertig, direkt loslegen.**
+- Nur bei `ModuleNotFoundError`: Pakete installieren —
+  `uv pip install pynacl pyyaml` (Hermes) bzw. `pip3 install pynacl pyyaml`.
+- Nur bei `profile: MISSING`: `profile.example.yaml` →
+  `$PINGPONG_STATE_DIR/profile.yaml` (Default `~/.pingpong/`) kopieren und
+  **Standort, Aktivitäten, Kontakt** mit dem Nutzer ausfüllen.
 
 Der öffentliche Broker ist **voreingestellt** — keine URL-Konfiguration nötig.
 Nur für einen eigenen Broker: `PINGPONG_BROKER_URL` oder `config.yaml` setzen.
+Gib bei Setup-Problemen nicht auf — erst `identity.py`-Ausgabe prüfen, sie
+sagt exakt, was fehlt.
 
 ## Procedure
 
