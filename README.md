@@ -29,9 +29,10 @@ git clone https://github.com/0xAaronx0/pingpong.git
 mkdir -p ~/.claude/skills && cp -r pingpong/skill ~/.claude/skills/pingpong
 pip3 install --user pynacl pyyaml
 ```
-Dann Claude öffnen und sagen: *„Ich möchte pingpong nutzen — richte mich ein."*
-Claude fragt dich nach Kiez, Aktivitäten und Kontakt, legt deine pseudonymen
-Schlüssel an und richtet den Match-Check automatisch ein.
+Dann Claude öffnen und wörtlich sagen: *„Lies den pingpong-Skill und führe
+zuerst `identity.py` aus — richte mich ein."* Das Skript leitet den Agenten
+durch alles Weitere: Es fragt dich nach Kiez, Aktivitäten und Kontakt, legt
+deine pseudonymen Schlüssel an und richtet den Match-Check automatisch ein.
 
 **Mit Hermes:** `skill/` nach `/opt/data/skills/leisure/pingpong/` kopieren,
 dann `uv pip install --python /opt/hermes/.venv/bin/python pynacl pyyaml` **und**

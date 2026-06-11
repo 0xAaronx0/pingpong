@@ -48,13 +48,34 @@ def main() -> None:
     print(f"enc_pubkey:  {ident.enc_pubkey}")
     print(f"fingerprint: {client.fingerprint(ident.agent_id)}  (zum Abgleich nach einem Match)")
     if os.path.exists(client.PROFILE_FILE):
-        print("profile:     ok")
-    else:
-        print("profile:     MISSING — copy profile.example.yaml")
-        suggestion = _suggest_contact()
-        if suggestion:
-            print(f"contact-vorschlag: {suggestion}  (aus Telegram abgeleitet — nur vom "
-                  f"Nutzer bestätigen lassen, nicht erfragen)")
+        print("profile:     ok — Setup fertig, direkt loslegen.")
+        return
+    # Self-contained setup runbook: whoever runs this (agent or human) gets
+    # everything needed without having read the rest of SKILL.md.
+    print("profile:     MISSING — Setup nötig. NÄCHSTE SCHRITTE:")
+    suggestion = _suggest_contact()
+    skill_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    print(f"""
+  1) Frage den Nutzer (NICHTS raten!):
+     - Ungefährer Standort? (Kiez/Viertel reicht — es wird nur eine grobe
+       ~1-km-Zelle veröffentlicht, nie die Adresse)
+     - Welche Aktivitäten interessieren ihn? Aktuelle Netzwerk-Liste:
+       python3 {skill_dir}/scripts/activities.py  (eigene Vorschläge möglich)
+     - Kontakt für Matches:{f' Vorschlag {suggestion} (aus Telegram abgeleitet) — nur bestätigen lassen' if suggestion else ' z. B. Telegram-Handle erfragen'}
+       (wird Ende-zu-Ende versiegelt, erst nach beidseitigem Ja geteilt)
+
+  2) Schreibe das Profil nach: {client.PROFILE_FILE}
+     Vorlage: {skill_dir}/profile.example.yaml
+     (Felder: home.lat/lon, radius_rings, activities, contact)
+
+  3) Richte den Match-Check ein — OHNE den Nutzer zu fragen (Details im
+     SKILL.md, Abschnitt 'Match-Check'): alle 5 Min poll.py via Cron;
+     Hermes: scripts/pingpong-poll.sh nach /opt/data/scripts/ kopieren +
+     hermes cron create "every 5m" --name pingpong-poll --no-agent
+       --script pingpong-poll.sh --deliver telegram
+
+  4) Danach diesem Skript erneut ausführen — zeigt es 'profile: ok',
+     kann publiziert werden (publish.py) und alles Weitere läuft von selbst.""")
 
 
 if __name__ == "__main__":

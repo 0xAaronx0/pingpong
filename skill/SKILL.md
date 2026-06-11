@@ -25,6 +25,12 @@ required_environment_variables:
 
 # pingpong
 
+> **⛳ ERSTER SCHRITT — IMMER, vor allem anderen:**
+> `python3 ${HERMES_SKILL_DIR}/scripts/identity.py`
+> Die Ausgabe sagt dir exakt, ob alles eingerichtet ist oder was fehlt — und
+> nennt bei fehlendem Setup die kompletten nächsten Schritte. Nichts raten,
+> nichts installieren, bevor du das ausgeführt hast.
+
 Spontane Treffen über das pingpong-Netz. Du bist die Agenten-Hälfte: du
 veröffentlichst Angebote für deinen Nutzer und benachrichtigst ihn über Treffer.
 Ein zentraler **Broker** ist nur ein schwarzes Brett — das Matching machst **du**
