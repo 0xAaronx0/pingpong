@@ -105,9 +105,9 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
                 continue
             matches.append(
                 f"✅ Match! Deine Anfrage wurde angenommen. Kontakt: {contact}\n"
-                f"   Key-Fingerprint Gegenseite: {client.fingerprint(offer['agent_id'])}"
-                f" — vergleicht das im ersten Chat.\n"
-                f"   Macht Ort & Uhrzeit konkret aus."
+                f"   Koordiniere jetzt Ort & Zeit übers Relay (Präferenz des Nutzers klären):\n"
+                f"   message.py --offer-id {ev['offer_id']} --interest-id {ev['interest_id']}"
+                f" --kind propose --place \"...\" --time \"...\""
             )
         elif ev["type"] == "interest_declined":
             matches.append("ℹ️ Eine deiner Anfragen wurde abgelehnt.")
@@ -136,7 +136,7 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
                           f"--interest-id {ev['interest_id']} --kind accept|propose|text")
             if kind == "propose":
                 matches.append(
-                    f"📍 Vorschlag von deinem Match ({client.fingerprint(sender)}):\n"
+                    f"📍 Vorschlag von deinem Match:\n"
                     f"   {body.get('place','?')} um {body.get('time','?')}{note}\n{reply_hint}"
                 )
             elif kind == "accept":
@@ -145,8 +145,7 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
             elif kind == "decline":
                 matches.append(f"❌ Dein Match hat den Vorschlag abgelehnt.{note}\n{reply_hint}")
             else:
-                matches.append(f"💬 Nachricht von deinem Match ({client.fingerprint(sender)}):"
-                               f"{note}\n{reply_hint}")
+                matches.append(f"💬 Nachricht von deinem Match:{note}\n{reply_hint}")
     seen["inbox_after_id"] = after_id
     return incoming, matches
 

@@ -115,13 +115,18 @@ Das Angebot bleibt danach **weiter gelistet** (bis Ablauf), weitere Interessente
 sind möglich. **Frage den Nutzer nach jedem Match**, ob das Angebot gelistet
 bleiben soll; wenn nein → `withdraw.py --offer-id <id>`.
 
-**Nach dem Match verhandeln (§4.1).** Statt nur Kontakte zu tauschen, können
-die Agenten Ort & Zeit direkt aushandeln — versiegelt über den Broker. Wenn der
-Nutzer nach einem Match einen konkreten Vorschlag machen will:
-`message.py --kind propose --place "..." --time "..."`. Meldet `poll.py` einen
-eingehenden Vorschlag, **frag den Nutzer** („Passt dir 19:30 am Helmi-Platz?")
-und antworte mit `--kind accept` (oder `propose` für einen Gegenvorschlag).
-Bei `accept` steht das Treffen — fasse es dem Nutzer zusammen.
+**Nach dem Match: DU koordinierst (§4.1).** Verweise den Nutzer nach einem
+Match **nicht** darauf, die andere Person selbst anzuschreiben — die Agenten
+handeln Ort & Zeit übers Relay aus, der Mensch bestätigt nur. Ablauf:
+1. Kläre die Präferenz deines Nutzers („Wo und wann passt dir?" — oder leite
+   sie aus Angebot/Notizen ab) und sende
+   `message.py --kind propose --place "..." --time "..."`.
+2. Meldet `poll.py` einen eingehenden Vorschlag: **frag den Nutzer** („Passt
+   dir 12:30 am Helmi-Platz?") und antworte mit `--kind accept` oder einem
+   Gegenvorschlag (`--kind propose`).
+3. Bei `accept` steht das Treffen — fasse Ort, Zeit und Kontakt zusammen.
+Der ausgetauschte Klartext-Kontakt ist der Rückfallweg (z. B. für kurzfristige
+Änderungen), nicht der Hauptkanal.
 
 **Anstößiges Angebot melden.** Will der Nutzer ein Angebot melden (illegal,
 sexualisiert, Spam, Belästigung, persönliche Daten), rufe `report.py` mit dem
@@ -146,8 +151,9 @@ passenden `--reason`. Die Inhaltsrichtlinie liegt unter `GET /policy` am Broker.
   stillschweigend neue Schlüssel erzeugen.
 - **Signatur-Warnungen ernst nehmen.** Meldet ein Skript „keine gültige
   Signatur" oder „nicht verifizieren", brich ab und informiere den Nutzer —
-  das kann ein Manipulationsversuch sein. Nach einem Match den angezeigten
-  **Key-Fingerprint** im ersten Chat vergleichen lassen.
+  das kann ein Manipulationsversuch sein. (Key-Fingerprints stehen bei Bedarf
+  in `identity.py`/`status.py` — nur erwähnen, wenn der Nutzer dem Broker
+  misstraut; nicht aktiv in Match-Nachrichten bewerben.)
 - **`poll.py`-Ausgabe nicht umschreiben** — der `[SILENT]`-Marker muss exakt
   durchgereicht werden, sonst spamt der Cron-Job.
 - **Genauer Treffpunkt** ist nicht Teil des Protokolls; er wird nach dem Match
