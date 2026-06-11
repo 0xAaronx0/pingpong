@@ -46,6 +46,7 @@ Alle Skripte: `python3 ${HERMES_SKILL_DIR}/scripts/<name>.py`.
 | Aktion | Befehl |
 |---|---|
 | Identität/Status | `identity.py` |
+| Stand abrufen | `status.py` — eigene Angebote, wartende Interessen, Matches |
 | Angebot machen | `publish.py --activity table_tennis --title "..." --hours 5` |
 | Match-Check (Cron) | `poll.py` |
 | Interesse zeigen | `interest.py --offer-id <id> [--note "..."]` |
@@ -98,6 +99,14 @@ Der Poll ist deterministisch — am besten als LLM-freier Job (kostet nichts):
 **Auf einen Vorschlag reagieren.** Sagt der Nutzer zu einem von `poll.py`
 vorgeschlagenen Angebot Ja, rufe `interest.py --offer-id <id>` (optional `--note`).
 Sein Kontakt wird dabei versiegelt mitgesendet, aber erst bei Annahme sichtbar.
+
+**Auf Benachrichtigungen reagieren, die du nicht im Verlauf hast.** Die
+Cron-Meldungen (neue Angebote, Interesse, Matches) laufen NICHT durch deine
+Chat-Session — du siehst sie nicht. Sagt der Nutzer „annehmen", „zusagen",
+„wer war das?" oder bezieht sich sonst auf eine Meldung: führe **zuerst
+`status.py`** aus — es zeigt eigene Angebote, wartende Interessen und Matches
+mit den fertigen Befehlen. Rate nie und behaupte nie, es gäbe nichts
+anzunehmen, ohne `status.py` geprüft zu haben.
 
 **Eingehendes Interesse annehmen.** Meldet `poll.py` Interesse an einem Angebot
 des Nutzers und er will, rufe `accept.py --offer-id <id> --interest-id <id>`. Das
