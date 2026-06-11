@@ -144,18 +144,33 @@ def main():
             assert offer_id in r.read().decode(), "matched offer must stay listed"
         print("· Offer stays listed after the match")
 
-        # v0.4: negotiation relay — alice proposes, bob receives + accepts
+        # v0.4: negotiation relay — alice proposes, bob receives + accepts.
+        # --when liegt 2h in der Vergangenheit, damit die Nachfrage (Termin+1h)
+        # sofort fällig ist.
+        from datetime import datetime, timedelta, timezone
+        past = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
         out = run(alice, "message.py", "--offer-id", offer_id, "--interest-id", interest_id,
-                  "--kind", "propose", "--place", "Helmi-Platz", "--time", "19:30")
+                  "--kind", "propose", "--place", "Helmi-Platz", "--time", "19:30",
+                  "--when", past)
         assert "Vorschlag gesendet" in out
         out = run(bob, "poll.py")
         assert "Vorschlag" in out and "Helmi-Platz" in out and "19:30" in out, out
         out = run(bob, "message.py", "--offer-id", offer_id, "--interest-id", interest_id,
                   "--kind", "accept", "--note", "bis gleich!")
-        assert "Zusage gesendet" in out
+        assert "Zusage gesendet" in out and "vorgemerkt" in out
         out = run(alice, "poll.py")
         assert "zugesagt" in out and "bis gleich" in out, out
         print("· Negotiation relay: propose -> accept, both sides verified")
+
+        # Post-meetup follow-up: due immediately (when+1h is in the past)
+        out = run(bob, "poll.py")
+        assert "Nachfrage zu deiner Verabredung" in out and "Wer war besser?" in out, out
+        out = run(bob, "feedback.py", "--meetup-id", interest_id[:8],
+                  "--happened", "ja", "--sympathisch", "ja", "--skill", "gleich")
+        assert "Feedback erfasst" in out and "Niveau-Schätzer" in out, out
+        out = run(bob, "poll.py")
+        assert "Nachfrage" not in out, out  # nur einmal fragen
+        print("· Post-meetup follow-up asked once, feedback recorded")
 
         # accept.py reminds the agent to ask the owner about keeping it listed
         # (checked above in alice's accept output)
@@ -168,10 +183,13 @@ def main():
         print("· New nearby activity announced to existing user")
 
         # Poison pill: a malicious owner accepts with a garbage contact blob.
-        # Bob's poll must survive it and advance its cursor.
+        # Bob's poll must survive it and advance its cursor. Bob knows alice
+        # from the meetup by now -> the discovery must carry the partner badge.
         offer2 = uuid_after(run(alice, "publish.py", "--activity", "running",
                                 "--title", "zweite Runde", "--hours", "2"), "offer_id")
-        run(bob, "poll.py")  # consume discovery notification
+        out = run(bob, "poll.py")  # consume discovery notification
+        assert "Kennst du schon" in out and "etwa dein Niveau" in out, out
+        print("· Known-partner annotation on new offers")
         interest2 = uuid_after(run(bob, "interest.py", "--offer-id", offer2), "interest_id")
         garbage = base64.urlsafe_b64encode(os.urandom(64)).decode().rstrip("=")
         raw_signed_post(alice, f"/interests/{interest2}/accept",

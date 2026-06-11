@@ -32,6 +32,7 @@ def discover(ident, profile, seen) -> list[str]:
     cells = watch_cells(profile)
     activities = set(profile.get("activities") or [])
     notified = set(seen["notified_offers"])
+    partners = client.load_meetups().get("partners", {})
     lines = []
     skipped_unsigned = 0
     offers = client.get("/offers", params={"cells": ",".join(cells)}) or []
@@ -50,9 +51,21 @@ def discover(ident, profile, seen) -> list[str]:
         notified.add(o["id"])
         title = o.get("title") or label(o["activity"])
         note = f" — {o['note']}" if o.get("note") else ""
+        known = ""
+        p = partners.get(o["agent_id"])
+        if p:
+            skill_map = {2: "deutlich stärker als du", 1: "etwas stärker als du",
+                         0: "etwa dein Niveau", -1: "etwas schwächer als du",
+                         -2: "deutlich schwächer als du"}
+            bits = [f"{p['meetups']}× getroffen"]
+            if p.get("skill") is not None:
+                bits.append(skill_map.get(p["skill"], ""))
+            if p.get("sympathisch"):
+                bits.append(f"sympathisch: {p['sympathisch']}")
+            known = f"\n   🎯 Kennst du schon: {', '.join(b for b in bits if b)}"
         lines.append(
             f"🏓 {label(o['activity'])}: {title}{note}\n"
-            f"   wann: {o['earliest']} – {o['latest']}  (Zelle {o['geocell']})\n"
+            f"   wann: {o['earliest']} – {o['latest']}  (Zelle {o['geocell']}){known}\n"
             f"   interessiert? → interest.py --offer-id {o['id']}"
         )
     if skipped_unsigned:
@@ -121,6 +134,17 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
                                "oder verifizieren — übersprungen.")
                 continue
             kind = body.get("kind")
+            store = client.load_meetups()
+            if kind == "propose":
+                store["proposals"][ev["interest_id"]] = {
+                    "place": body.get("place"), "time": body.get("time"),
+                    "when": body.get("when"), "offer_id": ev["offer_id"]}
+                client.save_meetups(store)
+            elif kind == "accept":
+                proposal = store["proposals"].get(ev["interest_id"], {})
+                client.record_meetup(store, offer=offer, interest_id=ev["interest_id"],
+                                     counterpart=sender, proposal=proposal)
+                client.save_meetups(store)
             note = f"\n   Notiz: {body['note']}" if body.get("note") else ""
             reply_hint = (f"   antworten → message.py --offer-id {ev['offer_id']} "
                           f"--interest-id {ev['interest_id']} --kind accept|propose|text")
@@ -167,6 +191,39 @@ def check_new_activities(profile, seen) -> list[str]:
     return lines
 
 
+def check_followups() -> list[str]:
+    """~1h nach einem verabredeten Termin: den Nutzer nach dem Treffen fragen."""
+    from datetime import datetime, timezone
+    store = client.load_meetups()
+    now = datetime.now(timezone.utc).isoformat()
+    lines, changed = [], False
+    for m in store["meetups"]:
+        if m.get("asked") or m.get("feedback") or m["followup_at"] > now:
+            continue
+        m["asked"] = True
+        changed = True
+        skill_q = ""
+        if m["activity"] == "table_tennis":
+            skill_q = ("\n   3) Wer war besser? Optionen: Gegenüber deutlich besser · "
+                       "Gegenüber etwas besser · etwa gleich gut · du etwas besser · "
+                       "du deutlich besser")
+        lines.append(
+            f"📋 Nachfrage zu deiner Verabredung: {label(m['activity'])}"
+            f"{' um ' + m['time'] if m.get('time') else ''}"
+            f"{' @ ' + m['place'] if m.get('place') else ''}\n"
+            f"   FRAGE DEN NUTZER:\n"
+            f"   1) Hat das Treffen stattgefunden? (falls nein: warum nicht?)\n"
+            f"   2) Falls ja: War dein Gegenüber sympathisch? (ja/neutral/nein)"
+            f"{skill_q}\n"
+            f"   Erfassen → feedback.py --meetup-id {m['id']} --happened ja|nein "
+            f"[--reason \"...\"] [--sympathisch ja|neutral|nein] "
+            f"[--skill gegenueber_deutlich|gegenueber_etwas|gleich|ich_etwas|ich_deutlich]"
+        )
+    if changed:
+        client.save_meetups(store)
+    return lines
+
+
 def main() -> None:
     ident = client.Identity.load_or_create()
     profile = client.load_profile()
@@ -175,10 +232,11 @@ def main() -> None:
     nearby = discover(ident, profile, seen)
     incoming, matches = process_inbox(ident, seen)
     new_tags = check_new_activities(profile, seen)
+    followups = check_followups()
 
     # Print before persisting: a duplicate notification next run is recoverable,
     # a notification marked seen but never delivered is not.
-    if not (nearby or incoming or matches or new_tags):
+    if not (nearby or incoming or matches or new_tags or followups):
         print("[SILENT]")
     else:
         blocks = []
@@ -190,6 +248,8 @@ def main() -> None:
             blocks.append("Neue Angebote in deiner Nähe:\n" + "\n".join(nearby))
         if new_tags:
             blocks.append("\n".join(new_tags))
+        if followups:
+            blocks.append("\n".join(followups))
         print("\n\n".join(blocks))
 
     client.save_seen(seen)

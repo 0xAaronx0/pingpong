@@ -287,6 +287,55 @@ def save_seen(seen: dict) -> None:
     os.replace(tmp, SEEN_FILE)  # atomic: a crash mid-write can't truncate the file
 
 
+# --- meetups & skill memory (post-meetup follow-ups, PROTOCOL-frei) ---------
+
+MEETUPS_FILE = os.path.join(STATE_DIR, "meetups.json")
+_MEETUPS_DEFAULTS = {"meetups": [], "proposals": {}, "partners": {}, "levels": {}}
+
+
+def load_meetups() -> dict:
+    data = dict(_MEETUPS_DEFAULTS)
+    if os.path.exists(MEETUPS_FILE):
+        try:
+            stored = json.load(open(MEETUPS_FILE))
+            if isinstance(stored, dict):
+                data.update(stored)
+        except (json.JSONDecodeError, OSError):
+            pass
+    return data
+
+
+def save_meetups(data: dict) -> None:
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = MEETUPS_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.replace(tmp, MEETUPS_FILE)
+
+
+def record_meetup(store: dict, *, offer: dict, interest_id: str,
+                  counterpart: str, proposal: dict) -> None:
+    """Remember an agreed meetup so the poll can follow up ~1h afterwards."""
+    if any(m["interest_id"] == interest_id for m in store["meetups"]):
+        return
+    from datetime import timedelta
+    when = proposal.get("when")
+    try:
+        base = datetime.fromisoformat((when or offer["latest"]).replace("Z", "+00:00"))
+        if base.tzinfo is None:
+            raise ValueError
+    except (ValueError, TypeError, KeyError):
+        base = datetime.now(timezone.utc)
+    followup = (base.astimezone(timezone.utc) + timedelta(hours=1)).isoformat(timespec="seconds")
+    store["meetups"].append({
+        "id": interest_id[:8],
+        "offer_id": offer["id"], "interest_id": interest_id,
+        "counterpart": counterpart, "activity": offer["activity"],
+        "place": proposal.get("place"), "time": proposal.get("time"),
+        "followup_at": followup, "asked": False, "feedback": None,
+    })
+
+
 # --- broker HTTP ----------------------------------------------------------
 
 class BrokerError(RuntimeError):

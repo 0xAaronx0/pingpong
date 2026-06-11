@@ -54,6 +54,7 @@ Alle Skripte: `python3 ${HERMES_SKILL_DIR}/scripts/<name>.py`.
 | Interesse annehmen | `accept.py --offer-id <id> --interest-id <id>` |
 | Angebot zurückziehen | `withdraw.py --offer-id <id>` |
 | Match-Nachricht | `message.py --offer-id <id> --interest-id <id> --kind propose\|accept\|decline\|text` |
+| Treffen-Feedback | `feedback.py --meetup-id <id> --happened ja\|nein [--sympathisch …] [--skill …]` |
 | Angebot melden | `report.py --offer-id <id> --reason illegal\|sexual\|spam\|harassment\|pii\|other` |
 
 ## Setup — IMMER zuerst prüfen, oft ist schon alles fertig
@@ -136,13 +137,28 @@ Match **nicht** darauf, die andere Person selbst anzuschreiben — die Agenten
 handeln Ort & Zeit übers Relay aus, der Mensch bestätigt nur. Ablauf:
 1. Kläre die Präferenz deines Nutzers („Wo und wann passt dir?" — oder leite
    sie aus Angebot/Notizen ab) und sende
-   `message.py --kind propose --place "..." --time "..."`.
+   `message.py --kind propose --place "..." --time "12:30" --when
+   "<ISO-Zeitstempel mit Zeitzone>"` — das `--when` ermöglicht die
+   automatische Nachfrage nach dem Treffen.
 2. Meldet `poll.py` einen eingehenden Vorschlag: **frag den Nutzer** („Passt
    dir 12:30 am Helmi-Platz?") und antworte mit `--kind accept` oder einem
    Gegenvorschlag (`--kind propose`).
 3. Bei `accept` steht das Treffen — fasse Ort, Zeit und Kontakt zusammen.
 Der ausgetauschte Klartext-Kontakt ist der Rückfallweg (z. B. für kurzfristige
 Änderungen), nicht der Hauptkanal.
+
+**Nach dem Treffen (automatische Nachfrage).** ~1h nach einem verabredeten
+Termin meldet `poll.py` eine Nachfrage. Stelle dem Nutzer genau diese Fragen:
+1) Hat das Treffen stattgefunden? (falls nein: warum nicht?)
+2) Falls ja: War dein Gegenüber sympathisch?
+3) Nur bei Tischtennis: Wer war besser? — Gegenüber deutlich besser ·
+   Gegenüber etwas besser · etwa gleich gut · du etwas besser · du deutlich
+   besser.
+Erfasse die Antworten mit `feedback.py` (Befehl steht in der Poll-Meldung).
+Die Daten bleiben **lokal** und bauen nach und nach eine Niveau-Einschätzung
+auf: Künftige Angebote bekannter Personen werden im Poll annotiert
+(„🎯 Kennst du schon: etwa dein Niveau, sympathisch") — nutze das aktiv, wenn
+der Nutzer fragt, wer zu seinem Spielniveau passt.
 
 **Neue Aktivität in der Gegend.** Meldet `poll.py` „🆕 Neue Aktivität in
 deiner Gegend", frag den Nutzer, ob sie ihn interessiert. Bei Ja: den Tag in
