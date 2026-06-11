@@ -160,6 +160,10 @@ passenden `--reason`. Die Inhaltsrichtlinie liegt unter `GET /policy` am Broker.
   versiegelte `contact:` des Profils. Der Broker **filtert** öffentliche Felder
   (Inhaltsrichtlinie, `GET /policy`) und lehnt Verstöße mit `422` ab — nenne dem
   Nutzer dann den Grund aus der Fehlermeldung.
+- **Profil-Daten NIEMALS raten.** Standort, Aktivitäten und Kontakt kommen vom
+  Nutzer (Kontakt ggf. aus dem `contact-vorschlag` von `identity.py`). Kannst
+  du nicht nachfragen (nicht-interaktiver Lauf), dann brich ab und benenne die
+  fehlenden Angaben — ein erfundener Standort produziert falsche Matches.
 - **Niemals eine zweite Identität anlegen.** Wenn der Nutzer pingpong schon
   benutzt hat, aber `identity.py` einen frischen State zeigt, läufst du
   vermutlich unter einem anderen `HOME` als vorher. Die Skripte suchen
