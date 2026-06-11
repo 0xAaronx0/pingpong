@@ -46,11 +46,35 @@ def main() -> None:
 
     # Read-only peek at recent inbox events (does NOT advance the poll cursor).
     res = client.get("/inbox", ident=ident, params={"after_id": 0}) or {"events": []}
-    recent = [e for e in res["events"] if e["type"] in ("interest_accepted", "match_message")][-3:]
-    if recent:
-        print("\nLetzte Match-Ereignisse (Details verarbeitet poll.py):")
-        for e in recent:
-            print(f"   {e['ts'][:16]}  {e['type']}  (offer {e['offer_id'][:8]}…)")
+    msgs = [e for e in res["events"] if e["type"] == "match_message"][-5:]
+    if msgs:
+        print("\nLetzte Relay-Nachrichten deiner Matches (neueste zuletzt):")
+    for e in msgs:
+        try:
+            offer = client.get(f"/offers/{e['offer_id']}")
+            if not client.verify_offer(offer):
+                continue
+            if offer["agent_id"] == ident.agent_id:
+                interests = client.get(f"/offers/{e['offer_id']}/interests", ident=ident)
+                m = next((i for i in interests if i["id"] == e["interest_id"]), None)
+                sender = m["agent_id"] if m else None
+            else:
+                sender = offer["agent_id"]
+            body = ident.unseal_message(e["sealed_payload"], sender, e["interest_id"])
+        except Exception:
+            continue
+        kind = body.get("kind")
+        detail = {"propose": f"📍 VORSCHLAG: {body.get('place','?')} um {body.get('time','?')}",
+                  "accept": "🤝 ZUSAGE", "decline": "❌ ABSAGE"}.get(kind, "💬 Nachricht")
+        note = f" — {body['note']}" if body.get("note") else ""
+        print(f"   {e['ts'][:16]}  {detail}{note}")
+        if kind == "propose":
+            print(f"      zusagen → message.py --offer-id {e['offer_id']} "
+                  f"--interest-id {e['interest_id']} --kind accept")
+    accepted_any = [e for e in res["events"] if e["type"] == "interest_accepted"][-2:]
+    for e in accepted_any:
+        print(f"\n   {e['ts'][:16]}  ✅ deine Anfrage wurde angenommen "
+              f"(Details verarbeitet poll.py)")
 
 
 if __name__ == "__main__":
