@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS reports (
 _MIGRATIONS = [
     ("offers", "offer_sig", "ALTER TABLE offers ADD COLUMN offer_sig TEXT"),
     ("interests", "interest_sig", "ALTER TABLE interests ADD COLUMN interest_sig TEXT"),
+    ("activities", "geocell", "ALTER TABLE activities ADD COLUMN geocell TEXT"),
 ]
 
 

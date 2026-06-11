@@ -140,6 +140,33 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
     return incoming, matches
 
 
+def check_new_activities(profile, seen) -> list[str]:
+    """Surface community-proposed activity tags from the user's area so they
+    can opt in ('Neue Aktivität: ... — interessiert dich das auch?')."""
+    try:
+        detail = client.get("/activities", params={"detail": 1}) or []
+    except client.BrokerError:
+        return []
+    names = sorted(a["name"] for a in detail)
+    known = seen.get("known_activities")
+    seen["known_activities"] = names
+    if known is None:          # first run: baseline silently
+        return []
+    knownset, mine = set(known), set(profile.get("activities") or [])
+    watch = set(watch_cells(profile))
+    lines = []
+    for a in detail:
+        if a["name"] in knownset or a["name"] in mine:
+            continue
+        if a.get("geocell") and a["geocell"] in watch:
+            lines.append(
+                f"🆕 Neue Aktivität in deiner Gegend: {label(a['name'])} ({a['name']})\n"
+                f"   Sag Bescheid, falls dich das auch interessiert — dann nehme "
+                f"ich sie in dein Suchprofil auf."
+            )
+    return lines
+
+
 def main() -> None:
     ident = client.Identity.load_or_create()
     profile = client.load_profile()
@@ -147,10 +174,11 @@ def main() -> None:
 
     nearby = discover(ident, profile, seen)
     incoming, matches = process_inbox(ident, seen)
+    new_tags = check_new_activities(profile, seen)
 
     # Print before persisting: a duplicate notification next run is recoverable,
     # a notification marked seen but never delivered is not.
-    if not (nearby or incoming or matches):
+    if not (nearby or incoming or matches or new_tags):
         print("[SILENT]")
     else:
         blocks = []
@@ -160,6 +188,8 @@ def main() -> None:
             blocks.append("Eingehendes Interesse:\n" + "\n".join(incoming))
         if nearby:
             blocks.append("Neue Angebote in deiner Nähe:\n" + "\n".join(nearby))
+        if new_tags:
+            blocks.append("\n".join(new_tags))
         print("\n\n".join(blocks))
 
     client.save_seen(seen)

@@ -25,7 +25,14 @@ def main() -> None:
         if not re.match(r"^[a-z][a-z0-9_]{0,31}$", tag):
             raise SystemExit(f"Ungültiger Tag '{tag}' — nur a-z, 0-9, _ (max 32 Zeichen).")
         ident = client.Identity.load_or_create()
-        res = client.post("/activities", {"activity": tag}, ident=ident)
+        body = {"activity": tag}
+        try:
+            import geo
+            home = client.load_profile().get("home") or {}
+            body["geocell"] = geo.encode(float(home["lat"]), float(home["lon"]), 6)
+        except Exception:
+            pass  # ohne Profil: Vorschlag ohne Geo-Bezug (wird nicht regional angekündigt)
+        res = client.post("/activities", body, ident=ident)
         if res and res.get("new"):
             print(f"'{tag}' ist jetzt netzwerk-weit als Aktivität verfügbar. ✓")
         else:

@@ -385,12 +385,18 @@ def test_activity_vocabulary():
     seed = client.get("/activities").json()
     assert "table_tennis" in seed and "lunch" in seed
 
-    # explicit proposal: new -> 201, existing -> 200
-    r = signed_post(client, alice, "/activities", {"activity": "bouldering"})
+    # explicit proposal (with proposer cell): new -> 201, existing -> 200
+    r = signed_post(client, alice, "/activities", {"activity": "bouldering",
+                                                   "geocell": "u33dc0"})
     assert r.status_code == 201 and r.json()["new"] is True
     r = signed_post(client, alice, "/activities", {"activity": "bouldering"})
     assert r.status_code == 200 and r.json()["new"] is False
     assert "bouldering" in client.get("/activities").json()
+    detail = client.get("/activities", params={"detail": 1}).json()
+    entry = next(a for a in detail if a["name"] == "bouldering")
+    assert entry["geocell"] == "u33dc0" and entry["created_at"]
+    assert signed_post(client, alice, "/activities",
+                       {"activity": "yoga", "geocell": "INVALID"}).status_code == 422
 
     # invalid format + policy violation rejected
     assert signed_post(client, alice, "/activities", {"activity": "Bould-ern!"}).status_code == 422

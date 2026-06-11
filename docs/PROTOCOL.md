@@ -225,8 +225,8 @@ Basis-URL z. B. `https://pingpong.example.org`. Alle Bodies JSON. Signatur-Heade
 | `POST /offers/{id}/report` | ✅ | `{reason, note?}` — reason ∈ illegal, sexual, spam, harassment, pii, other | `201 {reports, removed}` |
 | `GET /policy` | ✖ | — | `200` Inhaltsrichtlinie (Markdown) |
 | `GET /board` | ✖ | — | `200` öffentliche Web-Ansicht des Bretts |
-| `GET /activities` | ✖ | — | `200 [tag...]` Netzwerk-Vokabular (§6) |
-| `POST /activities` | ✅ | `{activity}` | `201 {new:true}` / `200 {new:false}` |
+| `GET /activities` | ✖ | `?detail=1` für `{name, geocell, created_at}` | `200` Netzwerk-Vokabular (§6) |
+| `POST /activities` | ✅ | `{activity, geocell?}` | `201 {new:true}` / `200 {new:false}` |
 
 ### 5.1 `/inbox`-Events (so erfährt der Suchende vom Match)
 
@@ -249,9 +249,13 @@ Das Vokabular liegt beim Broker und wächst mit der Nutzung:
 - **`GET /activities`** (öffentlich) liefert die aktuelle Liste; Clients bieten
   sie dem Nutzer an und mappen natürliche Sprache darauf.
 - **Neue Tags** entstehen automatisch beim Veröffentlichen eines Angebots mit
-  unbekanntem Tag, oder explizit via **`POST /activities`** (signiert) — z. B.
-  wenn jemand eine Aktivität nur in sein Suchprofil aufnehmen will. Ab dann ist
-  der Tag netzwerk-weit sichtbar.
+  unbekanntem Tag, oder explizit via **`POST /activities`** (signiert, optional
+  mit `geocell`) — z. B. wenn jemand eine Aktivität nur in sein Suchprofil
+  aufnehmen will. Ab dann ist der Tag netzwerk-weit sichtbar.
+- **Regionale Ankündigung:** Tags tragen die grobe Zelle des Vorschlagenden.
+  `GET /activities?detail=1` liefert `{name, geocell, created_at}`; Clients
+  diffen gegen ihren bekannten Stand und melden ihren Nutzern neue Tags aus
+  der eigenen Gegend („Neue Aktivität: … — interessiert dich das auch?").
 - **Schutz:** Format `^[a-z][a-z0-9_]{0,31}$`, Moderations-Filter, max. 10 neue
   Tags pro `agent_id`. Tags sind dauerhaft (kein Löschen im MVP).
 - Anzeige-Labels/Übersetzungen sind Client-Sache (`activity_label`).

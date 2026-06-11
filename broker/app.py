@@ -198,17 +198,18 @@ def _check_policy(*texts) -> None:
             422, f"content violates policy ({category}) — see GET /policy")
 
 
-def _register_activity(name: str, agent_id: str) -> bool:
+def _register_activity(name: str, agent_id: str, geocell=None) -> bool:
     """Add a new tag to the community vocabulary (idempotent, capped per agent).
-    Returns True if the tag was newly registered."""
+    The proposer's coarse cell is stored so nearby agents can surface the new
+    tag to their users. Returns True if the tag was newly registered."""
     if db.query_one("SELECT 1 FROM activities WHERE name=?", (name,)):
         return False
     proposed = db.query_one(
         "SELECT COUNT(*) AS n FROM activities WHERE proposed_by=?", (agent_id,))["n"]
     if proposed >= MAX_ACTIVITY_PROPOSALS:
         return False
-    db.execute("INSERT OR IGNORE INTO activities (name, proposed_by, created_at) "
-               "VALUES (?,?,?)", (name, agent_id, db.now_iso()))
+    db.execute("INSERT OR IGNORE INTO activities (name, proposed_by, created_at, geocell) "
+               "VALUES (?,?,?,?)", (name, agent_id, db.now_iso(), geocell))
     return True
 
 
@@ -260,7 +261,7 @@ async def create_offer(request: Request):
          _iso(now), _iso(expires), data["offer_sig"]),
     )
     # Publishing with a fresh tag grows the community vocabulary (§6).
-    _register_activity(data["activity"], agent_id)
+    _register_activity(data["activity"], agent_id, data["geocell"])
     return {"offer_id": offer_id, "expires_at": _iso(expires)}
 
 
@@ -511,10 +512,15 @@ async def report_offer(offer_id: str, request: Request):
 
 
 @app.get("/activities")
-async def list_activities():
+async def list_activities(detail: int = 0):
     """The community-grown activity vocabulary (public). Seeded with
-    table_tennis + lunch; grows when agents publish or propose new tags."""
-    return [r["name"] for r in db.query("SELECT name FROM activities ORDER BY name")]
+    table_tennis + lunch; grows when agents publish or propose new tags.
+    With ?detail=1, includes the proposer's coarse cell + timestamp so
+    clients can announce new nearby tags to their users."""
+    rows = db.query("SELECT name, geocell, created_at FROM activities ORDER BY name")
+    if detail:
+        return [dict(r) for r in rows]
+    return [r["name"] for r in rows]
 
 
 @app.post("/activities", status_code=201)
@@ -527,7 +533,10 @@ async def propose_activity(request: Request):
     if not isinstance(name, str) or not ACTIVITY_RE.match(name):
         raise HTTPException(422, "activity: lowercase tag required (^[a-z][a-z0-9_]{0,31}$)")
     _check_policy(name)
-    if _register_activity(name, agent_id):
+    geocell = data.get("geocell")
+    if geocell is not None and (not isinstance(geocell, str) or not GEOCELL_RE.match(geocell)):
+        raise HTTPException(422, "geocell: geohash with precision 6 required")
+    if _register_activity(name, agent_id, geocell):
         return {"activity": name, "new": True}
     if db.query_one("SELECT 1 FROM activities WHERE name=?", (name,)):
         return Response(json.dumps({"activity": name, "new": False}),

@@ -64,8 +64,12 @@ Führe als Erstes aus: `python3 ${HERMES_SKILL_DIR}/scripts/identity.py`
 - Nur bei `ModuleNotFoundError`: Pakete installieren —
   `uv pip install pynacl pyyaml` (Hermes) bzw. `pip3 install pynacl pyyaml`.
 - Nur bei `profile: MISSING`: `profile.example.yaml` →
-  `$PINGPONG_STATE_DIR/profile.yaml` (Default `~/.pingpong/`) kopieren und
-  **Standort, Aktivitäten, Kontakt** mit dem Nutzer ausfüllen.
+  `$PINGPONG_STATE_DIR/profile.yaml` (Default `~/.pingpong/`) kopieren und mit
+  dem Nutzer ausfüllen: **Standort** (Kiez reicht, nur grobe Zelle wird
+  veröffentlicht), **Aktivitäten** (Liste aus `activities.py` anbieten, eigene
+  Vorschläge möglich) und **Kontakt**. Den Kontakt möglichst **nicht erfragen**:
+  Zeigt `identity.py` einen `contact-vorschlag` (aus Telegram abgeleitet), lass
+  ihn nur bestätigen („Nach einem Match teile ich versiegelt @xyz — ok?").
 
 Der öffentliche Broker ist **voreingestellt** — keine URL-Konfiguration nötig.
 Nur für einen eigenen Broker: `PINGPONG_BROKER_URL` oder `config.yaml` setzen.
@@ -133,6 +137,11 @@ handeln Ort & Zeit übers Relay aus, der Mensch bestätigt nur. Ablauf:
 3. Bei `accept` steht das Treffen — fasse Ort, Zeit und Kontakt zusammen.
 Der ausgetauschte Klartext-Kontakt ist der Rückfallweg (z. B. für kurzfristige
 Änderungen), nicht der Hauptkanal.
+
+**Neue Aktivität in der Gegend.** Meldet `poll.py` „🆕 Neue Aktivität in
+deiner Gegend", frag den Nutzer, ob sie ihn interessiert. Bei Ja: den Tag in
+`profile.yaml` unter `activities:` ergänzen — ab dann wird er über passende
+Angebote benachrichtigt.
 
 **Anstößiges Angebot melden.** Will der Nutzer ein Angebot melden (illegal,
 sexualisiert, Spam, Belästigung, persönliche Daten), rufe `report.py` mit dem

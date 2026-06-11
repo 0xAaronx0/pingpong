@@ -262,7 +262,9 @@ def load_profile() -> dict:
     return yaml.safe_load(open(PROFILE_FILE)) or {}
 
 
-_SEEN_DEFAULTS = {"notified_offers": [], "inbox_after_id": 0}
+# known_activities: None = noch nie initialisiert (Erstlauf meldet nichts,
+# sonst würde jeder Neuling mit allen existierenden Tags zugespammt).
+_SEEN_DEFAULTS = {"notified_offers": [], "inbox_after_id": 0, "known_activities": None}
 
 
 def load_seen() -> dict:

@@ -160,6 +160,13 @@ def main():
         # accept.py reminds the agent to ask the owner about keeping it listed
         # (checked above in alice's accept output)
 
+        # New nearby activity: alice proposes a tag -> bob's poll announces it
+        out = run(alice, "activities.py", "--propose", "yoga_im_park")
+        assert "netzwerk-weit" in out
+        out = run(bob, "poll.py")
+        assert "Neue Aktivität" in out and "yoga" in out, out
+        print("· New nearby activity announced to existing user")
+
         # Poison pill: a malicious owner accepts with a garbage contact blob.
         # Bob's poll must survive it and advance its cursor.
         offer2 = uuid_after(run(alice, "publish.py", "--activity", "running",
