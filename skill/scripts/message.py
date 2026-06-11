@@ -57,6 +57,11 @@ def main() -> None:
               "text": "Nachricht gesendet"}[args.kind]
     print(pretty)
     print("  Die Gegenseite bekommt sie beim nächsten Poll (versiegelt, signiert).")
+    if args.kind == "accept":
+        print("  → PFLICHT: Bestätige deinem Nutzer jetzt die finale Verabredung")
+        print("    (Ort, Zeit, was vereinbart wurde) — er muss wissen, was abgemacht ist.")
+    elif args.kind == "propose":
+        print("  → Hinweis: propose/accept nur nach expliziter Bestätigung des Nutzers senden.")
 
 
 if __name__ == "__main__":
