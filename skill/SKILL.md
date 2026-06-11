@@ -128,6 +128,13 @@ passenden `--reason`. Die Inhaltsrichtlinie liegt unter `GET /policy` am Broker.
   versiegelte `contact:` des Profils. Der Broker **filtert** öffentliche Felder
   (Inhaltsrichtlinie, `GET /policy`) und lehnt Verstöße mit `422` ab — nenne dem
   Nutzer dann den Grund aus der Fehlermeldung.
+- **Niemals eine zweite Identität anlegen.** Wenn der Nutzer pingpong schon
+  benutzt hat, aber `identity.py` einen frischen State zeigt, läufst du
+  vermutlich unter einem anderen `HOME` als vorher. Die Skripte suchen
+  vorhandenen State selbst (env → `~/.pingpong` → `/opt/data/.pingpong`);
+  schlägt das fehl, suche die bestehende `identity.json` und setze
+  `PINGPONG_STATE_DIR` darauf — erst im Zweifel den Nutzer fragen, nie
+  stillschweigend neue Schlüssel erzeugen.
 - **Signatur-Warnungen ernst nehmen.** Meldet ein Skript „keine gültige
   Signatur" oder „nicht verifizieren", brich ab und informiere den Nutzer —
   das kann ein Manipulationsversuch sein. Nach einem Match den angezeigten

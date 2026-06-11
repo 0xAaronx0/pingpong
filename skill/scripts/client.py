@@ -24,7 +24,27 @@ import yaml
 from nacl.public import PrivateKey, PublicKey, SealedBox
 from nacl.signing import SigningKey, VerifyKey
 
-STATE_DIR = os.path.expanduser(os.environ.get("PINGPONG_STATE_DIR", "~/.pingpong"))
+def _resolve_state_dir() -> str:
+    """Find the agent's state dir without creating identity splits.
+
+    Some runtimes (e.g. the Hostinger Hermes container) give different
+    execution surfaces different HOMEs — blindly using ~/.pingpong would
+    mint a second identity there. So: explicit env wins, then an existing
+    identity under ~/.pingpong, then known shared locations, and only as
+    a last resort a fresh ~/.pingpong."""
+    env = os.environ.get("PINGPONG_STATE_DIR")
+    if env:
+        return os.path.expanduser(env)
+    home_dir = os.path.expanduser("~/.pingpong")
+    if os.path.exists(os.path.join(home_dir, "identity.json")):
+        return home_dir
+    for candidate in ("/opt/data/.pingpong",):  # Hermes container volume
+        if os.path.exists(os.path.join(candidate, "identity.json")):
+            return candidate
+    return home_dir
+
+
+STATE_DIR = _resolve_state_dir()
 IDENTITY_FILE = os.path.join(STATE_DIR, "identity.json")
 PROFILE_FILE = os.path.join(STATE_DIR, "profile.yaml")
 CONFIG_FILE = os.path.join(STATE_DIR, "config.yaml")
