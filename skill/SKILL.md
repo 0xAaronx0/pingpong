@@ -90,21 +90,27 @@ Zeitfenster: konkrete Uhrzeit → `--earliest`/`--latest` (ISO 8601 mit Zeitzone
 "die nächsten Stunden" → `--hours N`. Ort kommt automatisch aus dem Profil.
 Den zurückgegebenen `offer_id` dem Nutzer nennen.
 
-**Match-Check (Cron).** Richte einen wiederkehrenden Job ein, der `poll.py` alle
-~5 Minuten ausführt. `poll.py` gibt entweder eine Zusammenfassung (neue Angebote /
-eingehendes Interesse / Matches / Verhandlungs-Nachrichten) oder exakt `[SILENT]`
-aus. **Gib die Ausgabe unverändert weiter; bei `[SILENT]` sende nichts.**
-Der Poll ist deterministisch — am besten als LLM-freier Job (kostet nichts):
+**Match-Check (Cron) — automatisch einrichten, NICHT fragen.** Der Poll ist
+der Kern des Skills; ohne ihn erfährt der Nutzer nie von Matches. Richte ihn
+deshalb **direkt nach dem Profil-Setup ungefragt ein** (falls noch nicht
+vorhanden — erst prüfen!) und informiere nur mit einem Satz („Ich schaue ab
+jetzt alle 5 Minuten nach Treffern und melde mich nur dann."). Der Poll ist
+deterministisch und LLM-frei (kostet nichts pro Lauf):
 
-- **Hermes:** `hermes cron create "every 5m" --name pingpong-poll --no-agent
-  --script pingpong-poll.sh --deliver telegram` — mit einem Wrapper-Skript, das
-  `PINGPONG_*`-Env setzt, `poll.py` ausführt und `[SILENT]`-Ausgaben verschluckt
-  (leeres stdout = keine Zustellung).
-- **Claude (Code/Desktop):** Wenn der Nutzer den Match-Check einrichten will,
-  lege einen lokalen wiederkehrenden Cron-Job (alle 5 Min) an, der `poll.py`
-  ausführt; ist die Ausgabe nicht `[SILENT]`, informiere den Nutzer (z. B. per
-  Push-Notification). Hinweis an den Nutzer: läuft nur, solange der Rechner an
-  ist — für 24/7 einen Server-Agenten (z. B. Hermes auf einem VPS) nutzen.
+- **Hermes:** existiert laut `hermes cron list` kein Job `pingpong-poll`:
+  `cp ${HERMES_SKILL_DIR}/scripts/pingpong-poll.sh /opt/data/scripts/` und
+  `hermes cron create "every 5m" --name pingpong-poll --no-agent
+  --script pingpong-poll.sh --deliver telegram`.
+  (Das mitgelieferte Wrapper-Skript führt `poll.py` aus und verschluckt
+  `[SILENT]` — leeres stdout = keine Zustellung.)
+- **Claude (Code/Desktop):** lege einen lokalen wiederkehrenden Cron-Job
+  (alle 5 Min) an, der `poll.py` ausführt; ist die Ausgabe nicht `[SILENT]`,
+  informiere den Nutzer (z. B. Push-Notification). Einmaliger Hinweis an den
+  Nutzer: läuft nur, solange der Rechner an ist — für 24/7 einen
+  Server-Agenten (z. B. Hermes auf einem VPS) nutzen.
+
+`poll.py`-Ausgaben (Angebote / Interesse / Matches / Verhandlungs-Nachrichten)
+**unverändert weitergeben; bei `[SILENT]` nichts senden.**
 
 **Auf einen Vorschlag reagieren.** Sagt der Nutzer zu einem von `poll.py`
 vorgeschlagenen Angebot Ja, rufe `interest.py --offer-id <id>` (optional `--note`).
