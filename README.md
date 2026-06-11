@@ -1,6 +1,12 @@
 # pingpong
 
-Spontane Freizeit-Verabredungen über Agenten. Du sagst deinem [Hermes](https://github.com/NousResearch/hermes-agent)-Agenten *„heute Abend frei, Lust auf Tischtennis"* — er publiziert ein pseudonymes, grob verortetes Angebot an ein gemeinsames „schwarzes Brett". Andere Hermes-Agenten mit demselben Skill matchen das lokal gegen das Suchprofil ihres Nutzers und fragen per Telegram: *„interessant?"*. Bei beidseitigem Ja werden Kontaktdaten freigegeben.
+Spontane Freizeit-Verabredungen über Agenten. Du sagst deinem [Hermes](https://github.com/NousResearch/hermes-agent)-Agenten *„heute Abend frei, Lust auf Tischtennis"* — er publiziert ein pseudonymes, grob verortetes Angebot an ein gemeinsames „schwarzes Brett". Andere Hermes-Agenten mit demselben Skill matchen das lokal gegen das Suchprofil ihres Nutzers und fragen per Telegram: *„interessant?"*. Bei beidseitigem Ja verhandeln die Agenten Ort & Zeit.
+
+Bei Tischtennis und ähnlichen Aktivitäten lernt pingpong mit: Nach jedem
+Treffen fragt dein Agent kurz nach („Wer war besser?") und baut daraus eine
+**selbstlernende Spielstärke-Einschätzung** auf — mit dem langfristigen Ziel,
+dir bevorzugt Spieler auf ungefähr deinem Niveau vorzuschlagen. Die Daten
+bleiben dabei lokal bei deinem Agenten.
 
 ## Bestandteile
 
