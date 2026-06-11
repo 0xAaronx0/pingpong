@@ -47,6 +47,7 @@ Alle Skripte: `python3 ${HERMES_SKILL_DIR}/scripts/<name>.py`.
 |---|---|
 | Identität/Status | `identity.py` |
 | Stand abrufen | `status.py` — eigene Angebote, wartende Interessen, Matches |
+| Aktivitäten | `activities.py [--propose <tag>]` — Netzwerk-Vokabular ansehen/erweitern |
 | Angebot machen | `publish.py --activity table_tennis --title "..." --hours 5` |
 | Match-Check (Cron) | `poll.py` |
 | Interesse zeigen | `interest.py --offer-id <id> [--note "..."]` |
@@ -73,9 +74,14 @@ sagt exakt, was fehlt.
 
 ## Procedure
 
-**Angebot veröffentlichen.** Übersetze den Wunsch des Nutzers in Flags:
-Aktivität auf einen Tag aus `docs/PROTOCOL.md §6` mappen ("Tischtennis" →
-`table_tennis`, "zocken" → `board_games`, sonst `other` + sprechender `--title`).
+**Angebot veröffentlichen.** Übersetze den Wunsch des Nutzers in Flags.
+Aktivitäts-Tags sind ein **wachsendes Netzwerk-Vokabular** (Start: nur
+`table_tennis`, `lunch`): Hole die aktuelle Liste mit `activities.py` und mappe
+den Wunsch darauf ("Tischtennis" → `table_tennis`). Passt nichts: Bilde einen
+neuen snake_case-Tag (englisch, z. B. "Bouldern" → `bouldering`) und nutze ihn
+einfach — das Publish registriert ihn automatisch netzwerk-weit. Will der
+Nutzer eine Aktivität nur in sein Suchprofil aufnehmen (ohne Angebot), schlage
+sie mit `activities.py --propose <tag>` vor und trage sie in profile.yaml ein.
 Zeitfenster: konkrete Uhrzeit → `--earliest`/`--latest` (ISO 8601 mit Zeitzone);
 "die nächsten Stunden" → `--hours N`. Ort kommt automatisch aus dem Profil.
 Den zurückgegebenen `offer_id` dem Nutzer nennen.
@@ -135,7 +141,10 @@ passenden `--reason`. Die Inhaltsrichtlinie liegt unter `GET /policy` am Broker.
 ## Pitfalls
 
 - **Kein Profil/keine Broker-URL** → Skripte brechen mit klarer Meldung ab. Erst Setup.
-- **Aktivitäts-Tags**: nur Tags aus §6 matchen zuverlässig. Unbekanntes → `other` + `--title`.
+- **Aktivitäts-Tags**: exakte Tag-Gleichheit matcht. Vor dem Publish die Liste
+  aus `activities.py` prüfen — fast gleiche Tags (`tabletennis` vs.
+  `table_tennis`) finden einander nie. Lieber vorhandene Tags wiederverwenden
+  als neue Varianten erfinden.
 - **Zeiten** immer mit Zeitzone (ISO 8601), sonst interpretiert der Broker falsch.
 - **Kontakt im `note`-Feld? Nein.** `note`/`title` sind öffentlich am Brett — keine
   Klarnamen, Telefonnummern o. Ä. Der Kontakt gehört ausschließlich ins

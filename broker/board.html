@@ -55,7 +55,9 @@ const LABELS = { table_tennis:"Tischtennis", running:"Laufen", cycling:"Radfahre
 const ICONS = { table_tennis:"🏓", running:"🏃", cycling:"🚴", bouldering:"🧗", tennis:"🎾", basketball:"🏀",
   football:"⚽", badminton:"🏸", swimming:"🏊", walk:"🚶", board_games:"🎲", coffee:"☕", beer:"🍺", lunch:"🥗", other:"✨" };
 const sel = document.getElementById("activity");
-for (const [k, v] of Object.entries(LABELS)) sel.add(new Option(v, k));
+fetch("/activities").then(r => r.json()).then(list => {
+  for (const k of list) sel.add(new Option(LABELS[k] ?? k.replace(/_/g, " "), k));
+}).catch(() => { for (const k of ["table_tennis", "lunch"]) sel.add(new Option(LABELS[k], k)); });
 
 function fmt(iso) {
   const d = new Date(iso);

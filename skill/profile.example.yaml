@@ -11,12 +11,12 @@ home:
 
 radius_rings: 1        # Suchradius: 0 = nur eigene Zelle, 1 = +8 Nachbarzellen (~3.5 km), 2 = ~6 km
 
-# Aktivitäten, über die du benachrichtigt werden willst (Tags aus PROTOCOL §6).
-# Leere Liste = alles anzeigen.
+# Aktivitäten, über die du benachrichtigt werden willst. Das Vokabular wächst
+# mit der Community — aktuelle Liste: `activities.py`, eigene Vorschläge:
+# `activities.py --propose <tag>`. Leere Liste = alles anzeigen.
 activities:
   - table_tennis
-  - running
-  - board_games
+  - lunch
 
 # Dein Kontakt, der NUR nach beidseitigem Match Ende-zu-Ende-versiegelt
 # freigegeben wird. Frei wählbar.

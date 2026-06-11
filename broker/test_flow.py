@@ -376,6 +376,32 @@ def test_report_flow_removes_offer():
     assert r.status_code == 409
 
 
+def test_activity_vocabulary():
+    """PROTOCOL §6: seeded with table_tennis+lunch; grows via publish or
+    explicit proposal; format + policy enforced."""
+    client = TestClient(broker_app.app)
+    alice = Identity()
+
+    seed = client.get("/activities").json()
+    assert "table_tennis" in seed and "lunch" in seed
+
+    # explicit proposal: new -> 201, existing -> 200
+    r = signed_post(client, alice, "/activities", {"activity": "bouldering"})
+    assert r.status_code == 201 and r.json()["new"] is True
+    r = signed_post(client, alice, "/activities", {"activity": "bouldering"})
+    assert r.status_code == 200 and r.json()["new"] is False
+    assert "bouldering" in client.get("/activities").json()
+
+    # invalid format + policy violation rejected
+    assert signed_post(client, alice, "/activities", {"activity": "Bould-ern!"}).status_code == 422
+    assert signed_post(client, alice, "/activities", {"activity": "sex"}).status_code == 422
+
+    # publishing with a fresh tag auto-registers it
+    bob = Identity()
+    assert make_offer(client, bob, activity="frisbee").status_code == 201
+    assert "frisbee" in client.get("/activities").json()
+
+
 def test_policy_endpoint():
     client = TestClient(broker_app.app)
     r = client.get("/policy")

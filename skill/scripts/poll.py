@@ -14,17 +14,7 @@ import client
 import geo
 from nacl.exceptions import CryptoError
 
-ACTIVITY_LABELS = {
-    "table_tennis": "Tischtennis", "running": "Laufen", "cycling": "Radfahren",
-    "bouldering": "Bouldern", "tennis": "Tennis", "basketball": "Basketball",
-    "football": "Fußball", "badminton": "Badminton", "swimming": "Schwimmen",
-    "walk": "Spaziergang", "board_games": "Brettspiele", "coffee": "Kaffee",
-    "beer": "Bier", "lunch": "Mittagessen", "other": "Sonstiges",
-}
-
-
-def label(activity: str) -> str:
-    return ACTIVITY_LABELS.get(activity, activity)
+label = client.activity_label
 
 
 def watch_cells(profile: dict) -> list[str]:

@@ -71,6 +71,12 @@ CREATE TABLE IF NOT EXISTS match_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_match_messages ON match_messages (interest_id, sender);
 
+CREATE TABLE IF NOT EXISTS activities (
+    name        TEXT PRIMARY KEY,
+    proposed_by TEXT NOT NULL,
+    created_at  TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS reports (
     id          TEXT PRIMARY KEY,
     offer_id    TEXT NOT NULL,
@@ -109,6 +115,10 @@ def init() -> None:
         cols = {r["name"] for r in _conn.execute(f"PRAGMA table_info({table})")}
         if column not in cols:
             _conn.execute(ddl)
+    # Seed of the community-grown activity vocabulary (PROTOCOL §6).
+    for name in ("table_tennis", "lunch"):
+        _conn.execute("INSERT OR IGNORE INTO activities (name, proposed_by, created_at) "
+                      "VALUES (?, 'seed', ?)", (name, now_iso()))
     _conn.commit()
 
 

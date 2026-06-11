@@ -124,6 +124,19 @@ def verify_interest(i: dict, offer_id: str) -> bool:
         interest_canonical(i["agent_id"], i["enc_pubkey"], offer_id))
 
 
+ACTIVITY_LABELS = {
+    "table_tennis": "Tischtennis", "running": "Laufen", "cycling": "Radfahren",
+    "bouldering": "Bouldern", "tennis": "Tennis", "basketball": "Basketball",
+    "football": "Fußball", "badminton": "Badminton", "swimming": "Schwimmen",
+    "walk": "Spaziergang", "board_games": "Brettspiele", "coffee": "Kaffee",
+    "beer": "Bier", "lunch": "Mittagessen", "other": "Sonstiges",
+}
+
+
+def activity_label(tag: str) -> str:
+    return ACTIVITY_LABELS.get(tag, tag.replace("_", " "))
+
+
 def fingerprint(agent_id: str) -> str:
     """Short human-comparable key fingerprint. Both people should compare these
     in their first direct chat — that's what catches a fully-MITMing broker."""

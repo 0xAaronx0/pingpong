@@ -33,6 +33,7 @@ RATE_PER_MIN = int(os.environ.get("PINGPONG_RATE_PER_MIN", "30"))
 REPORT_THRESHOLD = int(os.environ.get("PINGPONG_REPORT_THRESHOLD", "3"))
 REPORT_REASONS = {"illegal", "sexual", "spam", "harassment", "pii", "other"}
 MAX_MATCH_MESSAGES = int(os.environ.get("PINGPONG_MAX_MATCH_MESSAGES", "100"))  # per sender per match
+MAX_ACTIVITY_PROPOSALS = int(os.environ.get("PINGPONG_MAX_ACTIVITY_PROPOSALS", "10"))  # per agent
 CLOCK_SKEW = 120          # seconds, §1.1
 NONCE_TTL = 300           # seconds to remember a nonce for replay protection
 
@@ -197,6 +198,20 @@ def _check_policy(*texts) -> None:
             422, f"content violates policy ({category}) — see GET /policy")
 
 
+def _register_activity(name: str, agent_id: str) -> bool:
+    """Add a new tag to the community vocabulary (idempotent, capped per agent).
+    Returns True if the tag was newly registered."""
+    if db.query_one("SELECT 1 FROM activities WHERE name=?", (name,)):
+        return False
+    proposed = db.query_one(
+        "SELECT COUNT(*) AS n FROM activities WHERE proposed_by=?", (agent_id,))["n"]
+    if proposed >= MAX_ACTIVITY_PROPOSALS:
+        return False
+    db.execute("INSERT OR IGNORE INTO activities (name, proposed_by, created_at) "
+               "VALUES (?,?,?)", (name, agent_id, db.now_iso()))
+    return True
+
+
 # --- offers ---------------------------------------------------------------
 
 @app.post("/offers", status_code=201)
@@ -244,6 +259,8 @@ async def create_offer(request: Request):
          data["geocell"], _iso(earliest), _iso(latest), data.get("note"),
          _iso(now), _iso(expires), data["offer_sig"]),
     )
+    # Publishing with a fresh tag grows the community vocabulary (§6).
+    _register_activity(data["activity"], agent_id)
     return {"offer_id": offer_id, "expires_at": _iso(expires)}
 
 
@@ -491,6 +508,31 @@ async def report_offer(offer_id: str, request: Request):
         ])
         removed = True
     return {"reports": count, "removed": removed}
+
+
+@app.get("/activities")
+async def list_activities():
+    """The community-grown activity vocabulary (public). Seeded with
+    table_tennis + lunch; grows when agents publish or propose new tags."""
+    return [r["name"] for r in db.query("SELECT name FROM activities ORDER BY name")]
+
+
+@app.post("/activities", status_code=201)
+async def propose_activity(request: Request):
+    """Propose a new activity tag without publishing an offer (signed)."""
+    agent_id = await verify_signed(request)
+    data = _json_body(request)
+    _require(data, "activity")
+    name = data["activity"]
+    if not isinstance(name, str) or not ACTIVITY_RE.match(name):
+        raise HTTPException(422, "activity: lowercase tag required (^[a-z][a-z0-9_]{0,31}$)")
+    _check_policy(name)
+    if _register_activity(name, agent_id):
+        return {"activity": name, "new": True}
+    if db.query_one("SELECT 1 FROM activities WHERE name=?", (name,)):
+        return Response(json.dumps({"activity": name, "new": False}),
+                        status_code=200, media_type="application/json")
+    raise HTTPException(429, f"activity proposal limit reached (max {MAX_ACTIVITY_PROPOSALS})")
 
 
 @app.get("/")
