@@ -29,17 +29,17 @@ def main() -> None:
     # Never seal to an unverified key: the offer must carry a valid signature
     # by its claimed author binding all fields incl. enc_pubkey (anti-MITM).
     if not client.verify_offer(offer):
-        raise SystemExit("Angebot hat keine gültige Autor-Signatur — breche ab "
-                         "(möglicher Manipulationsversuch).")
+        raise SystemExit("Offer has no valid author signature — aborting "
+                         "(possible tampering attempt).")
     sealed = ident.seal_contact(offer["enc_pubkey"], args.offer_id, contact)
     interest_sig = ident.sign_blob(client.interest_canonical(
         ident.agent_id, ident.enc_pubkey, args.offer_id))
     res = client.post(f"/offers/{args.offer_id}/interest",
                       {"enc_pubkey": ident.enc_pubkey, "sealed_for_owner": sealed,
                        "interest_sig": interest_sig, "note": args.note}, ident=ident)
-    print(f"Interesse gesendet an Angebot {args.offer_id} ({offer['activity']}).")
+    print(f"Interest sent for offer {args.offer_id} ({offer['activity']}).")
     print(f"  interest_id: {res['interest_id']}")
-    print("  Dein Kontakt wird erst freigegeben, wenn die andere Person annimmt.")
+    print("  Your contact is only released once the other person accepts.")
 
 
 if __name__ == "__main__":

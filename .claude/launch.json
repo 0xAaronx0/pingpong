@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "nabla-ui",
-      "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "4173", "--directory", "/Users/aaronlindner/nabla-hyperevm-ui"],
+      "runtimeExecutable": "/Users/aaronlindner/nabla-hyperevm-ui/node_modules/.bin/vite",
+      "runtimeArgs": ["serve", "/Users/aaronlindner/nabla-hyperevm-ui", "--port", "4173", "--strictPort"],
       "port": 4173
     },
     {

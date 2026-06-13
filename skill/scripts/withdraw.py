@@ -15,7 +15,7 @@ def main() -> None:
     args = ap.parse_args()
     ident = client.Identity.load_or_create()
     client.delete(f"/offers/{args.offer_id}", ident=ident)
-    print(f"Angebot {args.offer_id} zurückgezogen.")
+    print(f"Offer {args.offer_id} withdrawn.")
 
 
 if __name__ == "__main__":

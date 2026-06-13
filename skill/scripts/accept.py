@@ -31,8 +31,8 @@ def main() -> None:
         raise SystemExit(f"interest {args.interest_id} not found on offer {args.offer_id}")
     # Never seal to an unverified key (anti-MITM, PROTOCOL §1.2).
     if not client.verify_interest(match, args.offer_id):
-        raise SystemExit("Interesse hat keine gültige Signatur — breche ab "
-                         "(möglicher Manipulationsversuch).")
+        raise SystemExit("Interest has no valid signature — aborting "
+                         "(possible tampering attempt).")
 
     # Their contact (sealed + signed to us) — reveal it now that we're accepting.
     their_contact = ident.unseal_contact(match["sealed_for_owner"],
@@ -41,16 +41,16 @@ def main() -> None:
     sealed_back = ident.seal_contact(match["enc_pubkey"], args.offer_id, contact)
     client.post(f"/interests/{args.interest_id}/accept",
                 {"sealed_for_interested": sealed_back}, ident=ident)
-    print("Match bestätigt! 🎉")
-    print(f"  Kontakt der anderen Person: {their_contact}")
+    print("Match confirmed! 🎉")
+    print(f"  Contact of the other person: {their_contact}")
     print()
-    print("ÜBERNIMM JETZT DIE KOORDINATION (nicht den Nutzer selbst schreiben lassen):")
-    print("  Schlage Ort & Zeit übers Relay vor — kläre die Präferenz mit deinem Nutzer:")
+    print("NOW TAKE OVER COORDINATION (don't make the user message them directly):")
+    print("  Propose place & time via the relay — clarify the preference with your user:")
     print(f"  message.py --offer-id {args.offer_id} --interest-id {args.interest_id} \\")
     print("             --kind propose --place \"...\" --time \"...\"")
     print()
-    print("Das Angebot bleibt bis zum Ablauf gelistet — weitere Leute können sich melden.")
-    print("FRAGE AN DEN NUTZER: Soll es gelistet bleiben? Wenn nicht:")
+    print("The offer stays listed until it expires — more people can reach out.")
+    print("ASK THE USER: keep it listed? If not:")
     print(f"  withdraw.py --offer-id {args.offer_id}")
 
 

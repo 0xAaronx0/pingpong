@@ -2,43 +2,13 @@
 
 Idempotent: creates the Ed25519 + X25519 keypair on first run, then just
 reports. The agent_id is your pseudonym on the board. If the profile is
-missing and a Telegram identity is derivable from the runtime (Hermes),
-a contact suggestion is printed so the agent only needs the user's
-confirmation instead of asking for a handle.
+missing it prints a self-contained setup runbook for the agent.
 """
 from __future__ import annotations
 
-import json
 import os
-import urllib.parse
-import urllib.request
 
 import client
-
-
-def _suggest_contact():
-    """Best-effort: derive the user's Telegram handle from the Hermes runtime."""
-    tok = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat = os.environ.get("TELEGRAM_HOME_CHANNEL")
-    if not (tok and chat):
-        try:
-            for line in open("/opt/data/.env"):
-                if line.startswith("TELEGRAM_BOT_TOKEN=") and not tok:
-                    tok = line.strip().split("=", 1)[1]
-                if line.startswith("TELEGRAM_HOME_CHANNEL=") and not chat:
-                    chat = line.strip().split("=", 1)[1]
-        except OSError:
-            pass
-    if not (tok and chat):
-        return None
-    try:
-        url = (f"https://api.telegram.org/bot{tok}/getChat"
-               f"?chat_id={urllib.parse.quote(chat)}")
-        with urllib.request.urlopen(url, timeout=8) as r:
-            username = json.load(r).get("result", {}).get("username")
-        return f"@{username}" if username else None
-    except Exception:
-        return None
 
 
 def main() -> None:
@@ -46,36 +16,37 @@ def main() -> None:
     print(f"state_dir:   {client.STATE_DIR}")
     print(f"agent_id:    {ident.agent_id}")
     print(f"enc_pubkey:  {ident.enc_pubkey}")
-    print(f"fingerprint: {client.fingerprint(ident.agent_id)}  (zum Abgleich nach einem Match)")
+    print(f"fingerprint: {client.fingerprint(ident.agent_id)}  (to compare after a match)")
     if os.path.exists(client.PROFILE_FILE):
-        print("profile:     ok — Setup fertig, direkt loslegen.")
+        print("profile:     ok — setup complete, go ahead.")
         return
     # Self-contained setup runbook: whoever runs this (agent or human) gets
     # everything needed without having read the rest of SKILL.md.
-    print("profile:     MISSING — Setup nötig. NÄCHSTE SCHRITTE:")
-    suggestion = _suggest_contact()
+    print("profile:     MISSING — setup needed. NEXT STEPS:")
     skill_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     print(f"""
-  1) Frage den Nutzer (NICHTS raten!):
-     - Ungefährer Standort? (Kiez/Viertel reicht — es wird nur eine grobe
-       ~1-km-Zelle veröffentlicht, nie die Adresse)
-     - Welche Aktivitäten interessieren ihn? Aktuelle Netzwerk-Liste:
-       python3 {skill_dir}/scripts/activities.py  (eigene Vorschläge möglich)
-     - Kontakt für Matches:{f' Vorschlag {suggestion} (aus Telegram abgeleitet) — nur bestätigen lassen' if suggestion else ' z. B. Telegram-Handle erfragen'}
-       (wird Ende-zu-Ende versiegelt, erst nach beidseitigem Ja geteilt)
+  1) Ask the user (do NOT guess anything!):
+     - Rough location? (a neighbourhood is enough — only a coarse ~1 km cell
+       is published, never the address)
+     - Which activities are they into? Current network list:
+       python3 {skill_dir}/scripts/activities.py  (custom proposals are fine)
+     - Contact for matches: you usually already know the user's messaging
+       handle from your own context — propose it and just have them confirm
+       ("after a match I'll share @you, sealed — ok?"); otherwise ask.
+       (end-to-end sealed, shared only after a mutual yes)
 
-  2) Schreibe das Profil nach: {client.PROFILE_FILE}
-     Vorlage: {skill_dir}/profile.example.yaml
-     (Felder: home.lat/lon, radius_rings, activities, contact)
+  2) Write the profile to: {client.PROFILE_FILE}
+     Template: {skill_dir}/profile.example.yaml
+     (fields: home.lat/lon, radius_rings, activities, contact)
 
-  3) Richte den Match-Check ein — OHNE den Nutzer zu fragen (Details im
-     SKILL.md, Abschnitt 'Match-Check'): alle 5 Min poll.py via Cron;
-     Hermes: scripts/pingpong-poll.sh nach /opt/data/scripts/ kopieren +
+  3) Set up the match-check — WITHOUT asking the user (details in SKILL.md,
+     'Match-check' section): poll.py every 5 min via cron;
+     Hermes: copy scripts/pingpong-poll.sh to /opt/data/scripts/ +
      hermes cron create "every 5m" --name pingpong-poll --no-agent
        --script pingpong-poll.sh --deliver telegram
 
-  4) Danach diesem Skript erneut ausführen — zeigt es 'profile: ok',
-     kann publiziert werden (publish.py) und alles Weitere läuft von selbst.""")
+  4) Then run this script again — once it shows 'profile: ok' you can publish
+     (publish.py) and everything else runs on its own.""")
 
 
 if __name__ == "__main__":

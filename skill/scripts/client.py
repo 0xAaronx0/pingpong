@@ -32,7 +32,7 @@ def _resolve_state_dir() -> str:
     mint a second identity there. So: explicit env wins, then an existing
     identity under ~/.pingpong, then known shared locations, and only as
     a last resort a fresh ~/.pingpong."""
-    env = os.environ.get("PINGPONG_STATE_DIR")
+    env = os.getenv("PINGPONG_STATE_DIR")
     if env:
         return os.path.expanduser(env)
     home_dir = os.path.expanduser("~/.pingpong")
@@ -125,11 +125,11 @@ def verify_interest(i: dict, offer_id: str) -> bool:
 
 
 ACTIVITY_LABELS = {
-    "table_tennis": "Tischtennis", "running": "Laufen", "cycling": "Radfahren",
-    "bouldering": "Bouldern", "tennis": "Tennis", "basketball": "Basketball",
-    "football": "Fußball", "badminton": "Badminton", "swimming": "Schwimmen",
-    "walk": "Spaziergang", "board_games": "Brettspiele", "coffee": "Kaffee",
-    "beer": "Bier", "lunch": "Mittagessen", "other": "Sonstiges",
+    "table_tennis": "Table tennis", "running": "Running", "cycling": "Cycling",
+    "bouldering": "Bouldering", "tennis": "Tennis", "basketball": "Basketball",
+    "football": "Football", "badminton": "Badminton", "swimming": "Swimming",
+    "walk": "Walk", "board_games": "Board games", "coffee": "Coffee",
+    "beer": "Beer", "lunch": "Lunch", "other": "Other",
 }
 
 
@@ -250,7 +250,7 @@ DEFAULT_BROKER_URL = "https://pingpong.kitescout.tech"
 
 
 def broker_url() -> str:
-    url = os.environ.get("PINGPONG_BROKER_URL")
+    url = os.getenv("PINGPONG_BROKER_URL")
     if not url and os.path.exists(CONFIG_FILE):
         url = (yaml.safe_load(open(CONFIG_FILE)) or {}).get("broker_url")
     return (url or DEFAULT_BROKER_URL).rstrip("/")

@@ -55,9 +55,9 @@ def main() -> None:
     body["offer_sig"] = ident.sign_blob(
         client.offer_canonical({**body, "agent_id": ident.agent_id}))
     res = client.post("/offers", body, ident=ident)
-    print(f"Angebot veröffentlicht: {args.activity} in Zelle {geocell}")
-    print(f"  Fenster: {earliest} – {latest}")
-    print(f"  offer_id: {res['offer_id']}  (läuft ab: {res.get('expires_at')})")
+    print(f"Offer published: {args.activity} in cell {geocell}")
+    print(f"  window: {earliest} – {latest}")
+    print(f"  offer_id: {res['offer_id']}  (expires: {res.get('expires_at')})")
 
 
 if __name__ == "__main__":

@@ -24,9 +24,9 @@ def main() -> None:
     ident = client.Identity.load_or_create()
     res = client.post(f"/offers/{args.offer_id}/report",
                       {"reason": args.reason, "note": args.note}, ident=ident)
-    print(f"Meldung übermittelt ({args.reason}).")
+    print(f"Report submitted ({args.reason}).")
     if res and res.get("removed"):
-        print("Das Angebot wurde aufgrund mehrerer unabhängiger Meldungen entfernt.")
+        print("The offer was removed after several independent reports.")
 
 
 if __name__ == "__main__":

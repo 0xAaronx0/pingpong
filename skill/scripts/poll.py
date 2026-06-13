@@ -54,22 +54,22 @@ def discover(ident, profile, seen) -> list[str]:
         known = ""
         p = partners.get(o["agent_id"])
         if p:
-            skill_map = {2: "deutlich stärker als du", 1: "etwas stärker als du",
-                         0: "etwa dein Niveau", -1: "etwas schwächer als du",
-                         -2: "deutlich schwächer als du"}
-            bits = [f"{p['meetups']}× getroffen"]
+            skill_map = {2: "much stronger than you", 1: "a bit stronger than you",
+                         0: "about your level", -1: "a bit weaker than you",
+                         -2: "much weaker than you"}
+            bits = [f"met {p['meetups']}×"]
             if p.get("skill") is not None:
                 bits.append(skill_map.get(p["skill"], ""))
             if p.get("sympathisch"):
-                bits.append(f"sympathisch: {p['sympathisch']}")
-            known = f"\n   🎯 Kennst du schon: {', '.join(b for b in bits if b)}"
+                bits.append(f"likeable: {p['sympathisch']}")
+            known = f"\n   🎯 You know them: {', '.join(b for b in bits if b)}"
         lines.append(
             f"🏓 {label(o['activity'])}: {title}{note}\n"
-            f"   wann: {o['earliest']} – {o['latest']}  (Zelle {o['geocell']}){known}\n"
-            f"   interessiert? → interest.py --offer-id {o['id']}"
+            f"   when: {o['earliest']} – {o['latest']}  (cell {o['geocell']}){known}\n"
+            f"   interested? → interest.py --offer-id {o['id']}"
         )
     if skipped_unsigned:
-        lines.append(f"⚠️ {skipped_unsigned} Angebot(e) ohne gültige Signatur übersprungen.")
+        lines.append(f"⚠️ Skipped {skipped_unsigned} offer(s) with no valid signature.")
     seen["notified_offers"] = list(notified)
     return lines
 
@@ -84,10 +84,10 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
         # poll loop forever.
         after_id = max(after_id, int(ev["id"]))
         if ev["type"] == "new_interest":
-            note = f" (Notiz: {ev['note']})" if ev.get("note") else ""
+            note = f" (note: {ev['note']})" if ev.get("note") else ""
             incoming.append(
-                f"📨 Jemand interessiert sich für dein {label(ev.get('activity','?'))}-Angebot{note}.\n"
-                f"   annehmen → accept.py --offer-id {ev['offer_id']} --interest-id {ev['interest_id']}"
+                f"📨 Someone is interested in your {label(ev.get('activity','?'))} offer{note}.\n"
+                f"   accept → accept.py --offer-id {ev['offer_id']} --interest-id {ev['interest_id']}"
             )
         elif ev["type"] == "interest_accepted":
             try:
@@ -101,19 +101,18 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
                                                offer_id=ev["offer_id"])
             except (CryptoError, ValueError, KeyError, TypeError, client.BrokerError):
                 matches.append(
-                    "⚠️ Eine Annahme kam an, aber der Kontakt ließ sich nicht "
-                    "entschlüsseln oder verifizieren (fehlerhaft oder manipuliert) "
-                    "— übersprungen."
+                    "⚠️ An acceptance arrived, but the contact couldn't be decrypted "
+                    "or verified (malformed or tampered) — skipped."
                 )
                 continue
             matches.append(
-                f"✅ Match! Deine Anfrage wurde angenommen. Kontakt: {contact}\n"
-                f"   Koordiniere jetzt Ort & Zeit übers Relay (Präferenz des Nutzers klären):\n"
+                f"✅ Match! Your request was accepted. Contact: {contact}\n"
+                f"   Now coordinate place & time via the relay (clarify the user's preference):\n"
                 f"   message.py --offer-id {ev['offer_id']} --interest-id {ev['interest_id']}"
                 f" --kind propose --place \"...\" --time \"...\""
             )
         elif ev["type"] == "interest_declined":
-            matches.append("ℹ️ Eine deiner Anfragen wurde abgelehnt.")
+            matches.append("ℹ️ One of your requests was declined.")
         elif ev["type"] == "match_message":
             try:
                 offer = client.get(f"/offers/{ev['offer_id']}")
@@ -130,8 +129,8 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
                     sender = offer["agent_id"]
                 body = ident.unseal_message(ev["sealed_payload"], sender, ev["interest_id"])
             except (CryptoError, ValueError, KeyError, TypeError, client.BrokerError):
-                matches.append("⚠️ Eine Match-Nachricht ließ sich nicht entschlüsseln "
-                               "oder verifizieren — übersprungen.")
+                matches.append("⚠️ A match message couldn't be decrypted or verified "
+                               "— skipped.")
                 continue
             kind = body.get("kind")
             store = client.load_meetups()
@@ -145,28 +144,28 @@ def process_inbox(ident, seen) -> tuple[list[str], list[str]]:
                 client.record_meetup(store, offer=offer, interest_id=ev["interest_id"],
                                      counterpart=sender, proposal=proposal)
                 client.save_meetups(store)
-            note = f"\n   Notiz: {body['note']}" if body.get("note") else ""
-            reply_hint = (f"   antworten → message.py --offer-id {ev['offer_id']} "
+            note = f"\n   Note: {body['note']}" if body.get("note") else ""
+            reply_hint = (f"   reply → message.py --offer-id {ev['offer_id']} "
                           f"--interest-id {ev['interest_id']} --kind accept|propose|text")
             if kind == "propose":
                 matches.append(
-                    f"📍 Vorschlag von deinem Match:\n"
-                    f"   {body.get('place','?')} um {body.get('time','?')}{note}\n{reply_hint}"
+                    f"📍 Proposal from your match:\n"
+                    f"   {body.get('place','?')} at {body.get('time','?')}{note}\n{reply_hint}"
                 )
             elif kind == "accept":
-                matches.append(f"🤝 Dein Match hat zugesagt!{note}\n"
-                               f"   Treffen steht — viel Spaß!")
+                matches.append(f"🤝 Your match said yes!{note}\n"
+                               f"   The meetup is set — have fun!")
             elif kind == "decline":
-                matches.append(f"❌ Dein Match hat den Vorschlag abgelehnt.{note}\n{reply_hint}")
+                matches.append(f"❌ Your match declined the proposal.{note}\n{reply_hint}")
             else:
-                matches.append(f"💬 Nachricht von deinem Match:{note}\n{reply_hint}")
+                matches.append(f"💬 Message from your match:{note}\n{reply_hint}")
     seen["inbox_after_id"] = after_id
     return incoming, matches
 
 
 def check_new_activities(profile, seen) -> list[str]:
     """Surface community-proposed activity tags from the user's area so they
-    can opt in ('Neue Aktivität: ... — interessiert dich das auch?')."""
+    can opt in ('New activity: ... — does this interest you too?')."""
     try:
         detail = client.get("/activities", params={"detail": 1}) or []
     except client.BrokerError:
@@ -184,15 +183,15 @@ def check_new_activities(profile, seen) -> list[str]:
             continue
         if a.get("geocell") and a["geocell"] in watch:
             lines.append(
-                f"🆕 Neue Aktivität in deiner Gegend: {label(a['name'])} ({a['name']})\n"
-                f"   Sag Bescheid, falls dich das auch interessiert — dann nehme "
-                f"ich sie in dein Suchprofil auf."
+                f"🆕 New activity in your area: {label(a['name'])} ({a['name']})\n"
+                f"   Let me know if this interests you too — then I'll add it to "
+                f"your search profile."
             )
     return lines
 
 
 def check_followups() -> list[str]:
-    """~1h nach einem verabredeten Termin: den Nutzer nach dem Treffen fragen."""
+    """~1h after an agreed meetup time: ask the user how it went."""
     from datetime import datetime, timezone
     store = client.load_meetups()
     now = datetime.now(timezone.utc).isoformat()
@@ -204,20 +203,20 @@ def check_followups() -> list[str]:
         changed = True
         skill_q = ""
         if m["activity"] == "table_tennis":
-            skill_q = ("\n   3) Wer war besser? Optionen: Gegenüber deutlich besser · "
-                       "Gegenüber etwas besser · etwa gleich gut · du etwas besser · "
-                       "du deutlich besser")
+            skill_q = ("\n   3) Who was better? Options: them much stronger · "
+                       "them a bit stronger · about even · you a bit stronger · "
+                       "you much stronger")
         lines.append(
-            f"📋 Nachfrage zu deiner Verabredung: {label(m['activity'])}"
-            f"{' um ' + m['time'] if m.get('time') else ''}"
+            f"📋 Follow-up on your meetup: {label(m['activity'])}"
+            f"{' at ' + m['time'] if m.get('time') else ''}"
             f"{' @ ' + m['place'] if m.get('place') else ''}\n"
-            f"   FRAGE DEN NUTZER:\n"
-            f"   1) Hat das Treffen stattgefunden? (falls nein: warum nicht?)\n"
-            f"   2) Falls ja: War dein Gegenüber sympathisch? (ja/neutral/nein)"
+            f"   ASK THE USER:\n"
+            f"   1) Did the meetup happen? (if not: why not?)\n"
+            f"   2) If yes: was the other person likeable? (yes/neutral/no)"
             f"{skill_q}\n"
-            f"   Erfassen → feedback.py --meetup-id {m['id']} --happened ja|nein "
-            f"[--reason \"...\"] [--sympathisch ja|neutral|nein] "
-            f"[--skill gegenueber_deutlich|gegenueber_etwas|gleich|ich_etwas|ich_deutlich]"
+            f"   Record → feedback.py --meetup-id {m['id']} --happened yes|no "
+            f"[--reason \"...\"] [--sympathisch yes|neutral|no] "
+            f"[--skill them_much|them_bit|even|you_bit|you_much]"
         )
     if changed:
         client.save_meetups(store)
@@ -243,9 +242,9 @@ def main() -> None:
         if matches:
             blocks.append("\n".join(matches))
         if incoming:
-            blocks.append("Eingehendes Interesse:\n" + "\n".join(incoming))
+            blocks.append("Incoming interest:\n" + "\n".join(incoming))
         if nearby:
-            blocks.append("Neue Angebote in deiner Nähe:\n" + "\n".join(nearby))
+            blocks.append("New offers near you:\n" + "\n".join(nearby))
         if new_tags:
             blocks.append("\n".join(new_tags))
         if followups:
